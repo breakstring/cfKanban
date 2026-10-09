@@ -1,4 +1,4 @@
-import { record, uuid, identifier, boundedText, STATUSES, PRIORITIES, isSessionReference } from './shared.mjs';
+import { record, uuid, identifier, boundedText, STATUSES, PRIORITIES, isSessionReference, milestoneSummary } from './shared.mjs';
 
 const STATE_FIELDS = ['binding', 'identity', 'workspace_id', 'pending', 'issue', 'view', 'expanded_groups', 'filters', 'scope_mode', 'workspace_scope', 'scope_instance_id', 'source_session_id', 'session_context_changed'];
 const RESOURCE_FIELDS = ['id', 'instance_id', 'principal_id', 'display_name', 'title', 'name', 'trusted_api_origin', 'available'];
@@ -6,7 +6,7 @@ const pick = (value, fields) => Object.fromEntries(fields.filter(key => value?.[
 const resource = value => pick(value, RESOURCE_FIELDS);
 const identity = value => value ? { instance: resource(value.instance), principal: resource(value.principal) } : null;
 const status = value => pick(value, ['key', 'display_name']);
-const summary = value => value ? { ...pick(value, ['id', 'identifier', 'title', 'version', 'priority', 'is_blocked']), status: status(value.status), assignee: value.assignee ? resource(value.assignee) : null, allowed_actions: Array.isArray(value.allowed_actions) ? value.allowed_actions : [] } : null;
+const summary = value => value ? { ...pick(value, ['id', 'identifier', 'title', 'version', 'priority', 'is_blocked']), ...(value.milestone === undefined ? {} : { milestone: milestoneSummary(value.milestone) }), status: status(value.status), assignee: value.assignee ? resource(value.assignee) : null, allowed_actions: Array.isArray(value.allowed_actions) ? value.allowed_actions : [] } : null;
 
 export function checkpointState(state) {
   return { schema_version: 1, state: {
@@ -46,12 +46,13 @@ export function validateCheckpoint(value) {
       state.binding.statuses.forEach(checkStatus);
     }
     if (state.issue !== null) {
-      record(state.issue, ['id', 'identifier', 'title', 'version', 'priority', 'is_blocked', 'status', 'assignee', 'allowed_actions'], ['identifier', 'version', 'status', 'allowed_actions']);
+      record(state.issue, ['id', 'identifier', 'title', 'version', 'priority', 'is_blocked', 'milestone', 'status', 'assignee', 'allowed_actions'], ['identifier', 'version', 'status', 'allowed_actions']);
       identifier(state.issue.identifier); if (!Number.isSafeInteger(state.issue.version) || state.issue.version < 1) return null; checkStatus(state.issue.status);
       if (state.issue.id !== undefined) uuid(state.issue.id, 'Issue'); if (state.issue.title !== undefined) boundedText(state.issue.title, 1024, 'title', true);
       if (state.issue.priority !== undefined && !PRIORITIES.includes(state.issue.priority)) return null;
       if (state.issue.is_blocked !== undefined && typeof state.issue.is_blocked !== 'boolean') return null;
       if (state.issue.assignee != null) checkResource(state.issue.assignee);
+      if (state.issue.milestone != null) { record(state.issue.milestone, ['id', 'title', 'status_key', 'due_date'], ['id', 'title', 'status_key', 'due_date']); milestoneSummary(state.issue.milestone); }
       if (!Array.isArray(state.issue.allowed_actions) || state.issue.allowed_actions.length > 20 || state.issue.allowed_actions.some(action => typeof action !== 'string' || action.length > 64)) return null;
     }
     if (state.pending !== null) {
@@ -62,8 +63,9 @@ export function validateCheckpoint(value) {
       if (p.operation === 'set_locale') { record(p.change, ['locale'], ['locale']); if (!['en', 'zh-CN'].includes(p.change.locale)) return null; }
       else if (['label_add', 'label_remove'].includes(p.operation)) { record(p.change, ['label_id'], ['label_id']); uuid(p.change.label_id, 'label'); }
       else if (p.operation === 'update' || p.operation === 'create') {
-        record(p.change, p.operation === 'create' ? ['title', 'body', 'status_key', 'priority_key'] : ['title', 'body', 'status_key', 'priority_key', 'assignee_principal_id'], p.operation === 'create' ? ['title'] : []); if (!Object.keys(p.change).length || (p.change.status_key !== undefined && (!STATUSES.includes(p.change.status_key) || p.change.status_key === 'done')) || (p.change.priority_key !== undefined && !PRIORITIES.includes(p.change.priority_key))) return null;
+        record(p.change, p.operation === 'create' ? ['title', 'body', 'status_key', 'priority_key'] : ['title', 'body', 'status_key', 'priority_key', 'assignee_principal_id', 'milestone_id'], p.operation === 'create' ? ['title'] : []); if (!Object.keys(p.change).length || (p.change.status_key !== undefined && (!STATUSES.includes(p.change.status_key) || p.change.status_key === 'done')) || (p.change.priority_key !== undefined && !PRIORITIES.includes(p.change.priority_key))) return null;
         if (p.change.assignee_principal_id != null) uuid(p.change.assignee_principal_id, 'assignee');
+        if (p.change.milestone_id != null) uuid(p.change.milestone_id, 'milestone');
         if (p.change.title !== undefined) boundedText(p.change.title, 256, 'title');
         if (p.change.body !== undefined && (typeof p.change.body !== 'string' || new TextEncoder().encode(p.change.body).length > 65_536)) return null;
       } else if (p.operation === 'comment') { record(p.change, ['body'], ['body']); boundedText(p.change.body, 32768, 'comment'); }

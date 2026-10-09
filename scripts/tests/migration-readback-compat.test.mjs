@@ -115,11 +115,15 @@ test("schema 12 real release readback proves device_name and the complete migrat
       .map(statement => ({ success: true, results: database.prepare(statement).all() }))));
     const current = readback(sql);
     assert.ok(current.schema.columns.includes("credentials.device_name"));
+    assert.ok(current.schema.columns.includes("issues.milestone_id"));
     const state = reconcileMigrationState({ manifest, ...current });
     assert.equal(state.safe_to_continue, true);
     assert.ok(state.migrations.every(entry => entry.state === "applied"));
     const omitted = reconcileMigrationState({ manifest, ...readback(sql.replace(", 'credentials'", "")) });
     assert.equal(omitted.safe_to_continue, false);
     assert.equal(omitted.migrations.find(entry => entry.sequence === 12).reason, "ledger_present_schema_incomplete");
+    const missingMembership = reconcileMigrationState({ manifest, ...readback(sql.replace(", 'issues'", "")) });
+    assert.equal(missingMembership.safe_to_continue, false);
+    assert.equal(missingMembership.migrations.find(entry => entry.sequence === 28).reason, "ledger_present_schema_incomplete");
   } finally { database.close(); }
 });

@@ -1811,6 +1811,38 @@
         "kind": "workflow",
         "workflow": "waf-target-apply"
       }
+    },
+    {
+      "command": "milestone list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listMilestones"
+      }
+    },
+    {
+      "command": "milestone create",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "createMilestone"
+      }
+    },
+    {
+      "command": "milestone show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getMilestone"
+      }
+    },
+    {
+      "command": "milestone update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateMilestone"
+      }
     }
   ],
   "operations": [
@@ -4014,6 +4046,54 @@
         ],
         "note": "保留供旧操作核实及受限owned-rule disable使用；不代表仍支持新WAF启用。"
       }
+    },
+    {
+      "operation": "listMilestones",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/milestones",
+      "summary": "List Milestones",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "milestone list"
+        ]
+      }
+    },
+    {
+      "operation": "createMilestone",
+      "method": "POST",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/milestones",
+      "summary": "Create Milestone",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "milestone create"
+        ]
+      }
+    },
+    {
+      "operation": "getMilestone",
+      "method": "GET",
+      "path": "/api/v1/milestones/{milestone_id}",
+      "summary": "Get Milestone",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "milestone show"
+        ]
+      }
+    },
+    {
+      "operation": "updateMilestone",
+      "method": "PATCH",
+      "path": "/api/v1/milestones/{milestone_id}",
+      "summary": "Update Milestone",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "milestone update"
+        ]
+      }
     }
   ],
   "skill_commands": [
@@ -4828,7 +4908,11 @@
           "admin rate-limits plan",
           "admin rate-limits apply",
           "admin cloudflare configuration-plan",
-          "admin cloudflare configuration-apply"
+          "admin cloudflare configuration-apply",
+          "milestone list",
+          "milestone create",
+          "milestone show",
+          "milestone update"
         ],
         "note": "普通业务API按OpenAPI逐operation映射到固定公共noun/action；不公开任意路径透传。目录保留退役兼容名称不代表开放新配置；通用Skill请求拒绝新WAF计划、目标、apply及预算通知设置，原WAF操作查询与核实保留。专用传输与真实浏览器例外见operations。"
       }

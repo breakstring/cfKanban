@@ -29,6 +29,7 @@ Use the index titles to select pages; these are topic hints, not a reason to fet
 | Question | Relevant topics |
 | --- | --- |
 | Priority/Label queries, assignment, pagination / 优先级、标签、分配与分页 | Join & work → Find & create issues (`usage/issues`); collaboration only when Label maintenance is also asked |
+| Milestones, optional Issue membership and progress / 里程碑、可选事项归属与进度 | Join & work → Project milestones (`usage/milestones`); consult integration guidance for opening local or host workbenches |
 | Projects, members, scoped permissions / 项目、成员与权限 | Join & work → Workspaces & projects / Members & invitations; Concepts & roles for a role distinction |
 | Install or update an Agent integration / 安装或更新代理接入 | Agent integrations → Overview / General agents / DeepSeek Harness / Codex App; Skills are the primary workflow, with host extensions enhancing visual use; follow the actual index when an older instance groups setup under Start here or Deployment → Prepare & install Skills |
 | Local or online board, browser access / 本地或线上看板、浏览器入口 | Start here → Open a board (`integrations/webui`); Join & work → Join & sign in for online identity/Passkeys, Manage your workspace for a matching management entry |
@@ -56,6 +57,7 @@ For requested execution, route to `cfkanban`: it prefers the current host's conn
 | Search / 搜索 | “Find Issues with ‘login’ in DemoProject.” / “在 DemoProject 项目查找标题含‘登录’的任务。” | Title/identifier matches; no promise of full-text Comment or attachment search. / 按标题或编号匹配，不承诺搜索评论或附件全文。 |
 | Create / 创建 | “Create ‘Fix login error’ in DemoProject with this description: <details>.” / “在 DemoProject 创建‘修复登录错误’，描述为：<说明>。” | One new Issue and its identifier in the resolved Project. / 在准确项目创建一项任务并返回编号。 |
 | Edit / 编辑 | “Change CFK-123's title to ‘Fix mobile login’.” / “把 CFK-123 的标题改为‘修复移动端登录’。” | The requested field changes, followed by readback. / 只修改指定字段并读回确认。 |
+| Milestones / 里程碑 | “Add CFK-123 to this Project's Release milestone.” / “将 CFK-123 加入本项目的发布里程碑。” | One optional same-Project membership after resolving the exact goal; null removes it. / 核对准确目标后设置单一同项目归属，null 明确移出。 |
 | Change status / 改变状态 | “Move CFK-123 to in progress.” / “把 CFK-123 改为进行中。” | An explicit workflow change; it does not claim the work was performed. / 显式更新状态，不表示已代为执行任务内容。 |
 | Complete / 完成 | “Mark CFK-123 complete; optionally include result <summary> and validation <evidence>.” / “将 CFK-123 标为完成；可选附上结果<摘要>、验证<证据>。” | Done plus an immutable completion record based on actual evidence. / 标为完成并保存基于实际证据的不可变完成记录。 |
 | Reopen / 重新打开 | “Reopen CFK-123 as todo; the problem returned.” / “问题复现了，将 CFK-123 重新打开为待办。” | Status changes to todo and earlier completion records remain. / 状态改为待办，保留此前完成记录。 |
@@ -80,6 +82,8 @@ When the user wants a UI, route opening to `cfkanban` and its discovered host ca
 想看界面时，普通打开请求优先使用已可用的宿主工作台，其次本地浏览器。DSH 可以按准确目标打开侧栏；Codex 可以说「在当前对话旁边打开 cfKanban 工作台」，由 Agent 用同一已验证插件 bundle 读取当前对话的可信目录上下文；PATH 旧 CLI 缺少仓库 key 时用同 bundle 只读探测补齐，不升级全局 CLI。明确目标或 CLI 已保存目录默认优先；否则先复验这个仓库上次成功打开的 Codex 项目与 Principal，没有可用记忆时打开首个有权仓库推荐。成功绑定及用户项目切换会自动记住这个仓库的 Codex 最后项目，包括初始推荐之外的有权项目，不修改 CLI context 或 scope；面板本身不探测仓库。确认仓库但未配置推荐时也可单独传仓库 key，恢复或记住该仓库的 Codex 最后项目。没有仓库上下文时，唯一已核验连接直接打开有权默认项目，连接仍有歧义时才选择。全局侧栏使用独立的全局最后项目或有权默认，不读取仓库上下文。两个界面均可按工作区分组、分页切换已授权项目；偏好不恢复草稿或待核实写入。入口调用成功不证明面板已经显示或已定位项目。明确要求侧栏、对话面板、浏览器或线上页面时保留该选择；当前宿主不能完成时说明具体限制，不擅自换界面。
 
 Official Codex deep links target pages in the global sidebar app, not a specified conversation panel. The current cfKanban adapter does not consume their business paths, so do not offer a link that claims to select a Project or Issue. Read [Codex opening guidance](../cfkanban/references/workflows.zh-CN.md#codex-工作台入口) when this distinction matters. / Codex 官方 deep link 定位全局侧边栏应用内页面，不是指定对话面板；当前 adapter 未处理业务路径，不能提供声称定位项目或事项的链接。
+
+Where the deployed Service and installed bundle support milestones, Issue details in local and host workbenches let writers join, change or leave a same-Project milestone; readers see current membership. Create or maintain milestones through the full Web app or `cfkanban`'s CLI/MCP path. Projects and Issues can have no milestone, and closing a milestone does not complete its Issues. / 部署的 Service 与已安装 bundle 支持时，本地及宿主工作台的 Issue 详情允许 writer 加入、更换或退出同项目里程碑，reader 查看当前归属。创建和维护目标使用完整版 Web 或 `cfkanban` 的 CLI/MCP 路径。项目及事项可以没有里程碑，关闭目标不会完成其 Issue。
 
 Composer At-Mentions are not implemented in the current integration; do not describe an `@` selection as available project navigation or conversation association. / 当前接入尚未实现 Composer At-Mentions，不能把 `@` 选择描述为已有项目定位或对话关联能力。
 

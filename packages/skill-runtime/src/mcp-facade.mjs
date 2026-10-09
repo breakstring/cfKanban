@@ -17,7 +17,7 @@ const array = (items, maxItems, minItems = 0) => ({ type: "array", items, minIte
 const nullable = schema => ({ anyOf: [schema, { type: "null" }] });
 const object = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 const pagination = { cursor: text(8192), limit: { type: "integer", minimum: 1, maximum: 100 }, deleted: enumeration(["exclude", "only"]) };
-const issueFields = { title: text(256), body: { ...text(65536, 0), "x-max-utf8-bytes": 65536 }, status_key: enumeration(["backlog", "todo", "in_progress", "canceled"]), priority_key: enumeration(["none", "low", "medium", "high", "urgent"]), assignee_principal_id: nullable(uuid) };
+const issueFields = { title: text(256), body: { ...text(65536, 0), "x-max-utf8-bytes": 65536 }, status_key: enumeration(["backlog", "todo", "in_progress", "canceled"]), priority_key: enumeration(["none", "low", "medium", "high", "urgent"]), assignee_principal_id: nullable(uuid), milestone_id: nullable(uuid) };
 const issueTarget = { instance_id: uuid, identifier };
 const projectTarget = { instance_id: uuid, workspace_id: uuid, project_id: uuid };
 const key = { idempotency_key: { ...text(128), pattern: "^[\\x21-\\x7e]+$" } };
@@ -33,7 +33,14 @@ define("projects_get", "Read one explicit Project and its allowed_actions.", pro
 define("statuses_list", "Read server-defined status names in one explicit Project.", projectTarget, Object.keys(projectTarget));
 define("assignees_list", "Read one bounded page of current Project assignees; only public Principal identifiers and names are exposed.", { ...projectTarget, cursor: pagination.cursor, limit: pagination.limit }, Object.keys(projectTarget));
 define("labels_list", "Read one bounded page of existing active labels in one explicit Project. Does not create or manage labels.", { ...projectTarget, cursor: pagination.cursor, limit: pagination.limit }, Object.keys(projectTarget));
-define("issues_list", "Read one bounded server-filtered Issue page. Supply project_ids, or explicitly acknowledge aggregate scope using allow_unfiltered:true. Preserve filters with the cursor.", { instance_id: uuid, project_ids: array(uuid, 20, 1), allow_unfiltered: { type: "boolean" }, ...pagination, status: array(enumeration(["backlog", "todo", "in_progress", "done", "canceled"]), 5, 1), priority: array(issueFields.priority_key, 5, 1), label_ids: array(uuid, 20, 1), assignee: array({ anyOf: [uuid, { const: "unassigned" }] }, 20, 1), blocked: enumeration(["only", "exclude"]), q: { ...text(128), "x-max-utf8-bytes": 128 }, q_mode: enumeration(["typed"]) }, ["instance_id"]);
+const milestoneFields = { title: text(200), description: { ...text(8192, 0), "x-max-utf8-bytes": 8192 }, due_date: nullable({ ...text(10), pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }), status_key: enumeration(["open", "closed"]) };
+const milestoneTarget = { instance_id: uuid, milestone_id: uuid };
+define("milestones_list", "Read one bounded page of milestones and current Issue progress in one explicit Project.", { ...projectTarget, cursor: pagination.cursor, limit: pagination.limit, status: milestoneFields.status_key }, Object.keys(projectTarget));
+define("milestones_get", "Read one milestone and its allowed_actions under current Project authorization.", milestoneTarget, Object.keys(milestoneTarget));
+define("milestones_create", "Create one Project milestone using one stable retry key. Issue membership remains optional.", { ...projectTarget, ...milestoneFields, ...key }, [...Object.keys(projectTarget), "title", ...Object.keys(key)], true);
+define("milestones_update", "Update one milestone using current CAS. On an unknown result retain the exact request and verify it before another write.", { ...milestoneTarget, expected_version: version, changes: { ...object(milestoneFields), minProperties: 1 } }, [...Object.keys(milestoneTarget), "expected_version", "changes"], true);
+tools.at(-1).annotations.idempotentHint = false;
+define("issues_list", "Read one bounded server-filtered Issue page. Supply project_ids, or explicitly acknowledge aggregate scope using allow_unfiltered:true. Preserve filters with the cursor.", { instance_id: uuid, project_ids: array(uuid, 20, 1), allow_unfiltered: { type: "boolean" }, ...pagination, status: array(enumeration(["backlog", "todo", "in_progress", "done", "canceled"]), 5, 1), priority: array(issueFields.priority_key, 5, 1), label_ids: array(uuid, 20, 1), assignee: array({ anyOf: [uuid, { const: "unassigned" }] }, 20, 1), blocked: enumeration(["only", "exclude"]), milestone: { anyOf: [uuid, { const: "none" }] }, q: { ...text(128), "x-max-utf8-bytes": 128 }, q_mode: enumeration(["typed"]) }, ["instance_id"]);
 define("issues_get", "Read one Issue including allowed_actions and bounded embedded Comment/Relation continuations.", issueTarget, Object.keys(issueTarget));
 define("issues_create", "Create one Issue in one explicit Project; retain this payload and stable key until its commit state is known.", { ...projectTarget, ...issueFields, label_ids: array(uuid, 20), ...key }, [...Object.keys(projectTarget), "title", ...Object.keys(key)], true);
 define("issues_update", "Update one Issue with current CAS version and a stable key; entering done requires issues_complete.", { ...issueTarget, expected_version: version, changes: { ...object(issueFields), minProperties: 1 }, ...key }, [...Object.keys(issueTarget), "expected_version", "changes", ...Object.keys(key)], true);
@@ -250,6 +257,11 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
         await checkedIssue(relation.data?.source?.identifier);
         await checkedIssue(relation.data?.target?.identifier);
       }
+      if (bound && ["cfkanban_milestones_get", "cfkanban_milestones_update"].includes(name)) {
+        const milestone = await request(`/api/v1/milestones/${input.milestone_id}`);
+        if (!milestone.ok) return redact(milestone, snapshot.token);
+        scopeCheck(milestone.data?.project_id);
+      }
       const page = pick(input, ["cursor", "limit", "deleted"]);
       let result;
       const issuePath = `/api/v1/issues/${input.identifier}`;
@@ -274,11 +286,15 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
         case "cfkanban_statuses_list": result = await request(`${projectPath}/statuses`); break;
         case "cfkanban_assignees_list": result = await request(query(`${projectPath}/assignees`, pick(input, ["cursor", "limit"]))); break;
         case "cfkanban_labels_list": result = await request(query(`${projectPath}/labels`, pick(input, ["cursor", "limit"]))); break;
+        case "cfkanban_milestones_list": result = await request(query(`${projectPath}/milestones`, pick(input, ["cursor", "limit", "status"]))); break;
+        case "cfkanban_milestones_get": result = await request(`/api/v1/milestones/${input.milestone_id}`); break;
+        case "cfkanban_milestones_create": result = await request(`${projectPath}/milestones`, write(pick(input, Object.keys(milestoneFields)))); break;
+        case "cfkanban_milestones_update": result = await request(`/api/v1/milestones/${input.milestone_id}`, { method: "PATCH", body: { expected_version: input.expected_version, ...input.changes } }); break;
         case "cfkanban_issues_list": {
           if (!input.project_ids && input.allow_unfiltered !== true) throw toolError("MCP_EXPLICIT_SCOPE_REQUIRED", "Explicit Projects or aggregate acknowledgement required");
           if (bound && (!input.project_ids || input.allow_unfiltered === true)) throw toolError("MCP_PROJECT_BINDING_MISMATCH", "Bound panel cannot expand scope");
           input.project_ids?.forEach(scopeCheck);
-          result = await request(query("/api/v1/issues", { ...page, ...pick(input, ["status", "priority", "assignee", "blocked", "q", "q_mode"]), project: input.project_ids, label: input.label_ids }));
+          result = await request(query("/api/v1/issues", { ...page, ...pick(input, ["status", "priority", "assignee", "blocked", "milestone", "q", "q_mode"]), project: input.project_ids, label: input.label_ids }));
           if (!input.project_ids) result = { ...result, scope_expanded: true, scope_warning: "Authorized aggregate requested explicitly; no repository scope was read." };
           break;
         }
@@ -295,14 +311,14 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
         case "cfkanban_issues_complete": result = await request(`${issuePath}/commands/complete`, write(pick(input, ["expected_version", "summary", "verification", "artifacts", "follow_ups"]))); break;
       }
       if (searchIndex && result.ok) result = { ...result, reference_identity: referenceIdentity };
-      if (mutationSent && !result.ok && (result.status === 0 || result.status >= 500)) result = { ...result, outcome_unknown: true, recovery_request: { tool: name, arguments: input, idempotency_key: input.idempotency_key, next_action: "read_back_then_replay_same_request" } };
+      if (mutationSent && !result.ok && (result.status === 0 || result.status >= 500)) result = { ...result, outcome_unknown: true, recovery_request: { tool: name, arguments: input, idempotency_key: input.idempotency_key, next_action: name === "cfkanban_milestones_update" ? "read_back_and_verify_original_operation" : "read_back_then_replay_same_request" } };
       return { ...redact(result, snapshot.token), content_trust: "untrusted" };
     } catch (error) {
       if (boundedRead && error?.code === "MCP_REFERENCE_RESPONSE_TOO_LARGE") controller.abort(error);
       const safeCode = error?.code === "MCP_REFERENCE_RESPONSE_TOO_LARGE" ? error.code : signal.aborted ? "MCP_OPERATION_CANCELLED"
         : /^(?:MCP_|STATE_|OWNER_DEVICE_LOCKED$|IDENTITY_SWITCH_INCOMPLETE$|DISCOVERY_|INVALID_ORIGIN$)/.test(error?.code ?? "") ? error.code : "MCP_LOCAL_STATE_UNAVAILABLE";
       const result = error?.result ?? localFailure(safeCode);
-      return redact(mutationSent ? { ...result, outcome_unknown: true, recovery_request: { tool: name, arguments: input, idempotency_key: input.idempotency_key, next_action: "read_back_then_replay_same_request" } } : result, snapshot?.token);
+      return redact(mutationSent ? { ...result, outcome_unknown: true, recovery_request: { tool: name, arguments: input, idempotency_key: input.idempotency_key, next_action: name === "cfkanban_milestones_update" ? "read_back_and_verify_original_operation" : "read_back_then_replay_same_request" } } : result, snapshot?.token);
     } finally {
       clearTimeout(timer);
       callerSignal?.removeEventListener("abort", abort);

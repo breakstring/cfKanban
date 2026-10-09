@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PANEL_PROTOCOL, PanelError, record, uuid, identifier, boundedText, canonical, STATUSES, PRIORITIES, scopeFailureCode, canCreateIssue } from './shared.mjs';
+import { PANEL_PROTOCOL, PanelError, record, uuid, identifier, boundedText, canonical, STATUSES, PRIORITIES, scopeFailureCode, canCreateIssue, milestoneSummary } from './shared.mjs';
 import { readWorkspaceScope } from './scope.mjs';
 import { validateCheckpoint } from './checkpoint.mjs';
 
@@ -246,10 +246,25 @@ export class WorkbenchBridge {
       }
       return ok({ columns: result, identity });
     }
-    if (endpoint === 'assignees' || endpoint === 'labels') {
+    if (endpoint === 'assignees' || endpoint === 'labels' || endpoint === 'milestones') {
       record(input, ['binding_id', 'cursor'], ['binding_id']);
       const binding = this.binding(input);
-      return this.tool(binding, endpoint === 'labels' ? 'cfkanban_labels_list' : 'cfkanban_assignees_list', { workspace_id: binding.workspace_id, project_id: binding.project_id, limit: 20, ...(input.cursor === undefined ? {} : { cursor: boundedText(input.cursor, 4096, 'cursor') }) }, signal);
+      const result = await this.tool(binding, endpoint === 'labels' ? 'cfkanban_labels_list' : endpoint === 'milestones' ? 'cfkanban_milestones_list' : 'cfkanban_assignees_list', { workspace_id: binding.workspace_id, project_id: binding.project_id, limit: 20, ...(input.cursor === undefined ? {} : { cursor: boundedText(input.cursor, 4096, 'cursor') }) }, signal);
+      if (endpoint === 'milestones' && result.ok) {
+        const scope = result.data?.resolved_scope;
+        const candidates = Array.isArray(result.data) ? result.data : result.data?.items;
+        if (!Array.isArray(candidates)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid milestone candidates.');
+        for (const row of candidates) {
+          if (!row || typeof row !== 'object' || Array.isArray(row)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid milestone candidate.');
+          milestoneSummary(row);
+        }
+        if ((scope?.project_id !== undefined && scope.project_id !== binding.project_id)
+          || (scope?.workspace_id !== undefined && scope.workspace_id !== binding.workspace_id)
+          || candidates.some(row => row.project_id !== undefined && row.project_id !== binding.project_id || row.workspace_id !== undefined && row.workspace_id !== binding.workspace_id)) {
+          throw new PanelError('PANEL_SCOPE_DENIED', 'The milestones are outside the bound Project.');
+        }
+      }
+      return result;
     }
     if (endpoint === 'detail' || endpoint === 'comments') {
       record(input, ['binding_id', 'identifier', 'cursor'], ['binding_id', 'identifier']);
@@ -304,9 +319,10 @@ export class WorkbenchBridge {
       if (!['en', 'zh-CN'].includes(change.locale)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid language preference.');
       name = 'cfkanban_profile_locale_set';
     } else if (input.operation === 'update' || create) {
-      record(change, create ? ['title', 'body', 'status_key', 'priority_key'] : ['title', 'body', 'status_key', 'priority_key', 'assignee_principal_id'], create ? ['title'] : []);
+      record(change, create ? ['title', 'body', 'status_key', 'priority_key'] : ['title', 'body', 'status_key', 'priority_key', 'assignee_principal_id', 'milestone_id'], create ? ['title'] : []);
       if (!Object.keys(change).length || (change.status_key !== undefined && (!STATUSES.includes(change.status_key) || change.status_key === 'done')) || (change.priority_key !== undefined && !PRIORITIES.includes(change.priority_key))) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid Issue change.');
       if (change.assignee_principal_id !== undefined && change.assignee_principal_id !== null) uuid(change.assignee_principal_id, 'assignee');
+      if (change.milestone_id !== undefined && change.milestone_id !== null) uuid(change.milestone_id, 'milestone');
       if (change.title !== undefined) boundedText(change.title, 256, 'title');
       if (change.body !== undefined && (typeof change.body !== 'string' || new TextEncoder().encode(change.body).length > 65_536)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid Issue body.');
       name = create ? 'cfkanban_issues_create' : 'cfkanban_issues_update';

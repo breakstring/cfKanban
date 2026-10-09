@@ -12,7 +12,7 @@ export type EmbedLocale = "en" | "zh-CN";
 export type AssignmentFilter = "all" | "mine" | "unassigned";
 export type Priority = "none" | "low" | "medium" | "high" | "urgent";
 export type Status = "backlog" | "todo" | "in_progress" | "done" | "canceled";
-export type IssueChange = { title?: string; body?: string; status_key?: Exclude<Status, "done">; priority_key?: Priority; assignee_principal_id?: string | null };
+export type IssueChange = { title?: string; body?: string; status_key?: Exclude<Status, "done">; priority_key?: Priority; assignee_principal_id?: string | null; milestone_id?: string | null };
 export type IssueCreate = { title: string; body?: string; status_key?: Exclude<Status, "done">; priority_key?: Priority };
 export type Artifact = { kind: "commit" | "other" | "path" | "url"; value: string };
 export type ActionPayloads = {
@@ -34,6 +34,7 @@ export type ActionPayloads = {
   board_group: { status_key: Status; expanded: boolean };
   assignees: { next: boolean };
   labels: { next: boolean };
+  milestones: { next: boolean };
   set_locale: { locale: EmbedLocale };
   quick_update: { identifier: string; change: IssueChange };
   create_issue: { change: IssueCreate };
@@ -58,6 +59,7 @@ export type PublicResource = { id?: string; instance_id?: string; principal_id?:
 export type PublicIdentity = { instance: PublicResource; principal: PublicResource };
 export type PublicStatus = { key: Status; display_name?: string; name?: string };
 export type PublicLabel = { id: string; name: string };
+export type PublicMilestone = { id: string; title: string; status_key: "open" | "closed"; due_date: string | null };
 export type PublicIssue = {
   hierarchy?: IssueHierarchy;
   id?: string;
@@ -69,6 +71,7 @@ export type PublicIssue = {
   priority: Priority;
   assignee?: PublicResource | null;
   labels?: PublicLabel[];
+  milestone?: PublicMilestone | null;
   allowed_actions?: string[];
   completion?: unknown;
   completion_record?: unknown;
@@ -96,6 +99,8 @@ export type EmbedSnapshot = {
   assignees_has_more?: boolean;
   labels?: PublicLabel[];
   labels_has_more?: boolean;
+  milestones?: PublicMilestone[];
+  milestones_has_more?: boolean;
   page: { items?: PublicIssue[]; issues?: PublicIssue[]; next_cursor?: string | null; continuation?: { next_cursor?: string | null }; capacity_reached?: boolean } | null;
   issue: PublicIssue | null;
   comments: PublicComment[];
@@ -119,8 +124,8 @@ export type EmbedSnapshot = {
 
 const priorities = new Set(["none", "low", "medium", "high", "urgent"]);
 const statuses = new Set(["backlog", "todo", "in_progress", "done", "canceled"]);
-const actions = new Set<string>(["scope_retry", "scope_page", "scope_bind", "manual", "select_instance", "workspaces", "select_workspace", "bind", "project_menu", "project_switch", "unbind", "filters", "page", "open_issue", "issue_back", "comments", "mutate", "recover", "view", "board_page", "board_group", "assignees", "quick_update", "labels", "set_locale", "create_issue"]);
-const snapshotFields = new Set(["candidates", "identity", "workspaces", "projects", "workspace_id", "workspace_has_more", "project_has_more", "project_menu_groups", "project_menu_has_more", "project_menu_error", "binding", "page", "issue", "comments", "comments_has_more", "filters", "busy", "error", "pending", "view", "board", "expanded_groups", "assignees", "assignees_has_more", "source_session_id", "session_context_changed", "workspace_scope", "scope_mode", "scope_targets", "scope_next_offset", "scope_fallback", "capabilities", "notice", "locale", "theme", "labels", "labels_has_more"]);
+const actions = new Set<string>(["scope_retry", "scope_page", "scope_bind", "manual", "select_instance", "workspaces", "select_workspace", "bind", "project_menu", "project_switch", "unbind", "filters", "page", "open_issue", "issue_back", "comments", "mutate", "recover", "view", "board_page", "board_group", "assignees", "quick_update", "labels", "milestones", "set_locale", "create_issue"]);
+const snapshotFields = new Set(["candidates", "identity", "workspaces", "projects", "workspace_id", "workspace_has_more", "project_has_more", "project_menu_groups", "project_menu_has_more", "project_menu_error", "binding", "page", "issue", "comments", "comments_has_more", "filters", "busy", "error", "pending", "view", "board", "expanded_groups", "assignees", "assignees_has_more", "source_session_id", "session_context_changed", "workspace_scope", "scope_mode", "scope_targets", "scope_next_offset", "scope_fallback", "capabilities", "notice", "locale", "theme", "labels", "labels_has_more", "milestones", "milestones_has_more"]);
 const privateFields = /^(?:__proto__|prototype|constructor|token|access_token|refresh_token|credential|credentials|secret|csrf_token|cookie|cookies|authorization|binding_id|preview_id|dsh_workspace_id|stateRoot|state_root)$/i;
 
 function record(value: unknown, fields: readonly string[], required: readonly string[] = fields): value is Record<string, unknown> {
@@ -174,12 +179,13 @@ function boundedJson(value: unknown, limit: number, forbidPrivate = false): bool
 }
 
 function validChange(value: unknown): boolean {
-  return record(value, ["title", "body", "status_key", "priority_key", "assignee_principal_id"], []) && Object.keys(value).length > 0
+  return record(value, ["title", "body", "status_key", "priority_key", "assignee_principal_id", "milestone_id"], []) && Object.keys(value).length > 0
     && (value.title === undefined || text(value.title, 256))
     && (value.body === undefined || typeof value.body === "string" && new TextEncoder().encode(value.body).length <= 65_536)
     && (value.status_key === undefined || value.status_key !== "done" && member(value.status_key, statuses))
     && (value.priority_key === undefined || member(value.priority_key, priorities))
-    && (value.assignee_principal_id === undefined || value.assignee_principal_id === null || uuid(value.assignee_principal_id));
+    && (value.assignee_principal_id === undefined || value.assignee_principal_id === null || uuid(value.assignee_principal_id))
+    && (value.milestone_id === undefined || value.milestone_id === null || uuid(value.milestone_id));
 }
 
 export function parseActionMessage(value: unknown): ActionMessage | null {
@@ -188,7 +194,7 @@ export function parseActionMessage(value: unknown): ActionMessage | null {
   let valid = false;
   switch (value.action) {
     case "scope_retry": case "manual": case "unbind": case "issue_back": case "comments": case "recover": valid = record(p, []); break;
-    case "scope_page": case "page": case "assignees": case "labels": valid = record(p, ["next"]) && typeof p.next === "boolean"; break;
+    case "scope_page": case "page": case "assignees": case "labels": case "milestones": valid = record(p, ["next"]) && typeof p.next === "boolean"; break;
     case "set_locale": valid = record(p, ["locale"]) && member(p.locale, ["en", "zh-CN"]); break;
     case "scope_bind": valid = record(p, ["target_id"]) && text(p.target_id, 160); break;
     case "select_instance": valid = record(p, ["instance_id"]) && uuid(p.instance_id); break;
@@ -229,18 +235,27 @@ export function parseSnapshotMessage(value: unknown): { type: "snapshot"; state:
   const identity = (value: unknown) => value === null || (ordinary(value) && resource(value.instance) && resource(value.principal));
   const status = (value: unknown) => ordinary(value) && typeof value.key === "string" && statuses.has(value.key) && optionalString(value.display_name) && optionalString(value.name);
   const labels = (value: unknown) => Array.isArray(value) && value.length <= 1000 && value.every(label => record(label, ["id", "name"]) && uuid(label.id) && text(label.name, 128)) && new Set(value.map(label => label.id)).size === value.length;
+  const milestone = (value: unknown) => record(value, ["id", "title", "status_key", "due_date"])
+    && uuid(value.id) && text(value.title, 400) && value.title === value.title.trim() && Array.from(value.title).length <= 200
+    && member(value.status_key, ["open", "closed"])
+    && (value.due_date === null || (typeof value.due_date === "string" && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value.due_date)
+      && !value.due_date.startsWith("0000") && Number.isFinite(Date.parse(`${value.due_date}T00:00:00Z`))
+      && new Date(`${value.due_date}T00:00:00Z`).toISOString().slice(0, 10) === value.due_date));
+  const milestones = (value: unknown) => Array.isArray(value) && value.length <= 1000 && value.every(milestone)
+    && new Set(value.map(item => item.id)).size === value.length;
   const issue = (value: unknown) => ordinary(value) && issueIdentifier(value.identifier) && text(value.title, 8192) && optionalString(value.body, 262_144)
     && Number.isSafeInteger(value.version) && Number(value.version) > 0 && status(value.status) && typeof value.priority === "string" && priorities.has(value.priority)
     && (value.assignee === undefined || value.assignee === null || resource(value.assignee)) && (value.is_blocked === undefined || typeof value.is_blocked === "boolean")
     && (value.hierarchy === undefined || readIssueHierarchy(value.hierarchy) !== undefined)
     && (value.labels === undefined || labels(value.labels))
+    && (value.milestone === undefined || value.milestone === null || milestone(value.milestone))
     && (value.allowed_actions === undefined || (Array.isArray(value.allowed_actions) && value.allowed_actions.length <= 50 && value.allowed_actions.every(item => text(item, 100))));
   const nullableIssue = (value: unknown) => value === null || issue(value);
   const summaryRows = (value: unknown): boolean => {
     if (!Array.isArray(value) || value.length > ISSUE_COLLECTION_LIMIT) return false;
     const seen = new Set();
     return value.every(row => {
-      if (!record(row, ["id", "identifier", "title", "version", "priority", "status", "assignee", "labels", "allowed_actions", "is_blocked", "hierarchy"], ["identifier", "title", "version", "priority", "status"]) || !issue(row) || seen.has(row.identifier)) return false;
+      if (!record(row, ["id", "identifier", "title", "version", "priority", "status", "assignee", "labels", "allowed_actions", "is_blocked", "hierarchy", "milestone"], ["identifier", "title", "version", "priority", "status"]) || !issue(row) || seen.has(row.identifier)) return false;
       seen.add(row.identifier); return true;
     });
   };
@@ -264,12 +279,13 @@ export function parseSnapshotMessage(value: unknown): { type: "snapshot"; state:
     || !(state.comments as unknown[]).every(value => ordinary(value) && uuid(value.id) && optionalString(value.body, 262_144) && optionalString(value.created_at, 100) && (value.author === undefined || resource(value.author)) && (value.principal === undefined || resource(value.principal)))
     || !(state.scope_targets as unknown[]).every(value => ordinary(value) && text(value.id, 160) && typeof value.available === "boolean" && optionalString(value.display_name) && (value.project_id === undefined || uuid(value.project_id)) && (value.unavailability === undefined || text(value.unavailability, 100) || error(value.unavailability)))
     || !nullableUuid(state.workspace_id) || !nullableSession(state.source_session_id)
-    || !["workspace_has_more", "project_has_more", "project_menu_has_more", "comments_has_more", "session_context_changed", "assignees_has_more", "labels_has_more"].every(key => state[key] === undefined || typeof state[key] === "boolean")
+    || !["workspace_has_more", "project_has_more", "project_menu_has_more", "comments_has_more", "session_context_changed", "assignees_has_more", "labels_has_more", "milestones_has_more"].every(key => state[key] === undefined || typeof state[key] === "boolean")
     || !(state.scope_next_offset === null || (Number.isSafeInteger(state.scope_next_offset) && Number(state.scope_next_offset) >= 0))
     || !(state.workspace_scope === null || (record(state.workspace_scope, ["status"]) && text(state.workspace_scope.status, 100)))
     || !(state.locale === undefined || member(state.locale, ["en", "zh-CN"]))
     || !(state.theme === undefined || member(state.theme, ["orange", "blue"]))
-    || !(state.labels === undefined || labels(state.labels))) return null;
+    || !(state.labels === undefined || labels(state.labels))
+    || !(state.milestones === undefined || milestones(state.milestones))) return null;
   if (state.project_menu_error !== undefined && !error(state.project_menu_error)) return null;
   if (state.project_menu_groups !== undefined && (!Array.isArray(state.project_menu_groups) || state.project_menu_groups.length > 8
     || new Set(state.project_menu_groups.map(group => ordinary(group) && ordinary(group.workspace) ? group.workspace.id : null)).size !== state.project_menu_groups.length

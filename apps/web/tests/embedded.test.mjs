@@ -135,6 +135,95 @@ test("detail label actions use one existing label and wait for confirmed snapsho
   } finally { f.close(); }
 });
 
+test("detail milestone membership adds, changes and exits only through confirmed host snapshots", async () => {
+  const f = await mountedDetail();
+  const first = { id: randomUUID(), title: "Release 1", status_key: "open", due_date: "2026-10-30" };
+  const closed = { id: randomUUID(), title: "Previous release", status_key: "closed", due_date: null };
+  const confirm = async milestone => {
+    const received = new Promise(resolve => {
+      const stop = watch(() => f.vm.state, () => { stop(); resolve(); });
+    });
+    f.channel.port2.postMessage({ type: "snapshot", state: JSON.parse(JSON.stringify({ ...f.vm.state, issue: { ...f.vm.state.issue, milestone, version: f.vm.state.issue.version + 1 } })) });
+    await received; await nextTick();
+  };
+  try {
+    f.vm.state.issue.milestone = null;
+    f.vm.state.milestones = [first, closed];
+    assert.equal(f.vm.hasMilestoneProjection, true);
+    await f.vm.chooseMilestone(null);
+    await f.vm.chooseMilestone(randomUUID());
+    assert.equal(f.calls.length, 0);
+    await f.vm.chooseMilestone(first.id);
+    assert.deepEqual(f.calls[0].payload, { operation: "update", change: { milestone_id: first.id } });
+    assert.equal(f.vm.detailMilestone, null, "an action acknowledgement must not optimistically change membership");
+    await confirm(first);
+    assert.deepEqual(f.vm.detailMilestone, first);
+    await f.vm.chooseMilestone(first.id);
+    assert.equal(f.calls.length, 1, "the confirmed current option does not write again");
+    f.vm.state.milestones = [closed];
+    assert.deepEqual(f.vm.milestoneOptions, [first, closed], "the current membership remains visible outside the loaded page");
+    await f.vm.chooseMilestone(closed.id);
+    assert.deepEqual(f.calls[1].payload, { operation: "update", change: { milestone_id: closed.id } });
+    assert.equal(f.vm.detailMilestone.id, first.id);
+    await confirm(closed);
+    assert.match(f.vm.milestoneLabel(closed), /Closed/);
+    await f.vm.chooseMilestone(null);
+    assert.deepEqual(f.calls[2].payload, { operation: "update", change: { milestone_id: null } });
+    assert.equal(f.vm.detailMilestone.id, closed.id);
+    await confirm(null);
+    assert.equal(f.vm.detailMilestone, null);
+  } finally { f.close(); }
+});
+
+test("milestone options load bounded pages and block old services, readonly identities and pending writes", async () => {
+  const f = await mountedDetail();
+  const milestone = { id: randomUUID(), title: "Release", status_key: "open", due_date: null };
+  try {
+    assert.equal(f.vm.hasMilestoneProjection, false);
+    f.vm.state.milestones = [milestone];
+    await f.vm.loadMilestones(false);
+    await f.vm.chooseMilestone(milestone.id);
+    await f.vm.updateDetail({ milestone_id: null });
+    assert.equal(f.calls.length, 0, "an omitted projection preserves the old Service experience");
+    await f.vm.updateDetail({ priority_key: "low" });
+    assert.equal(f.calls.length, 1, "existing Issue actions remain available");
+    f.vm.state.issue.milestone = milestone;
+    f.vm.state.milestones_has_more = true;
+    await f.vm.loadMilestones(false);
+    await f.vm.loadMilestones(true);
+    assert.deepEqual(f.calls.slice(1).map(({ action, payload }) => ({ action, payload })), [{ action: "milestones", payload: { next: false } }, { action: "milestones", payload: { next: true } }]);
+    f.vm.state.milestones_has_more = false;
+    await f.vm.loadMilestones(true);
+    assert.equal(f.calls.length, 3);
+    f.result = { ok: false, error: { code: "EMBED_OPERATION_FAILED" } };
+    await f.vm.loadMilestones(false);
+    assert.equal(f.vm.milestonesError, true);
+    f.result = { ok: true };
+    await f.vm.loadMilestones(false);
+    assert.equal(f.vm.milestonesError, false);
+    for (const block of ["reader", "pending", "busy"]) {
+      f.vm.state.capabilities.update = block !== "reader";
+      f.vm.state.pending = block === "pending" ? { operation: "update" } : null;
+      f.vm.state.busy = block === "busy" ? 1 : 0;
+      await f.vm.loadMilestones(false);
+      await f.vm.chooseMilestone(null);
+      assert.equal(f.calls.length, 5, `${block} cannot read writer options or mutate membership`);
+      assert.equal(f.vm.detailMilestone.id, milestone.id);
+    }
+    f.vm.state.busy = 0;
+    f.vm.state.pending = null;
+    f.vm.state.capabilities.update = true;
+    f.vm.showMilestonePicker = true;
+    await nextTick(); await tick(); await tick();
+    assert.equal(f.calls.at(-1).action, "milestones", "opening the picker requests a fresh first page");
+    f.vm.state = { ...f.vm.state, binding: { ...f.vm.state.binding, project: { id: randomUUID() } }, issue: null, milestones: undefined, milestones_has_more: false };
+    await nextTick();
+    assert.equal(f.vm.showMilestonePicker, false);
+    assert.equal(f.vm.milestonesLoading, false);
+    assert.deepEqual(f.vm.milestoneOptions, [], "project changes discard old options");
+  } finally { f.close(); }
+});
+
 test("the workbench applies confirmed account language and theme without sending profile fields", async () => {
   const f = await mountedDetail();
   try {

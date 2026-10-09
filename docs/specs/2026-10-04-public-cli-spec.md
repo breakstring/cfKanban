@@ -1,5 +1,7 @@
 # 公共 CLI 与三端能力同步合同
 
+> 2026-10-09 增量：[项目里程碑](2026-10-09-project-milestones-spec.md)（Frozen）增加项目内交付节点、可选单一 Issue 归属与当前进度；趋势图单独规划。
+
 - 状态：Frozen
 - 日期：2026-10-04
 - 任务：[CFK-584](https://cfkanban.dev/app/issues/CFK-584) 与 CFK-585～CFK-592

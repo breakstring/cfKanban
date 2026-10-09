@@ -36,6 +36,7 @@
 | 容器 UUID、API / URL / scope 寻址 | [容器 UUID](specs/2026-09-08-container-uuid-spec.md) |
 | 归档、恢复、永久删除与历史保留 | [容器清理](specs/2026-09-08-container-purge-spec.md) |
 | 附件、私有 R2、容量与清理 | [Issue 附件](specs/2026-09-19-issue-attachments-spec.md) |
+| 项目里程碑、可选 Issue 归属和进度 | [项目里程碑](specs/2026-10-09-project-milestones-spec.md) |
 | Issue 优先级、标签、负责人筛选与查询索引 | [Issue 结构化筛选](specs/2026-09-29-issue-query-filters-spec.md) |
 | 活动与审计倒序历史、正序增量兼容与时间索引 | [活动历史倒序](specs/2026-10-01-event-history-order-spec.md) |
 | 用量、限额与可选采集 | [用量统计](specs/2026-09-19-usage-statistics-spec.md) |

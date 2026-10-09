@@ -89,7 +89,7 @@ test("prebuilt artifact starts offline at a spaced absolute path with empty PATH
     const initialized = await initialize(peer);
     assert.equal(initialized.result.serverInfo.version, metadata.release_version);
     const list = await peer.request("tools/list");
-    assert.equal(list.result.tools.length, 26);
+    assert.equal(list.result.tools.length, 30);
     const mentions = list.result.tools.find(tool => tool.name === "cfkanban_mentions_search");
     assert.deepEqual(mentions._meta["openai/extensions"], { "mentions/search": {} });
     assert.deepEqual(mentions._meta.ui.visibility, ["app"]);
@@ -101,7 +101,7 @@ test("prebuilt artifact starts offline at a spaced absolute path with empty PATH
     assert.equal(legacyMention.result.structuredContent.error.code, "MCP_INVALID_ARGUMENTS");
     const unknownReference = await peer.request("resources/read", { uri: "cfkanban://issue/unknown" });
     assert.equal(unknownReference.error.data.code, "MCP_MENTION_REFERENCE_UNKNOWN");
-    for (const name of ["cfkanban_profile_locale_set", "cfkanban_labels_list", "cfkanban_issues_labels_add", "cfkanban_issues_labels_remove"]) {
+    for (const name of ["cfkanban_profile_locale_set", "cfkanban_labels_list", "cfkanban_issues_labels_add", "cfkanban_issues_labels_remove", "cfkanban_milestones_list", "cfkanban_milestones_get", "cfkanban_milestones_create", "cfkanban_milestones_update"]) {
       assert.ok(list.result.tools.some(tool => tool.name === name));
     }
     assert.ok(list.result.tools.every(tool => tool.inputSchema.additionalProperties === false));

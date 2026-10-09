@@ -32,6 +32,7 @@ const NotificationsView = lazyPage(() => import("./views/NotificationsView.vue")
 const ProjectActivityView = lazyPage(() => import("./views/ProjectActivityView.vue"));
 const ProjectDeletedIssuesView = lazyPage(() => import("./views/ProjectDeletedIssuesView.vue"));
 const ProjectLabelsView = lazyPage(() => import("./views/ProjectLabelsView.vue"));
+const ProjectMilestonesView = lazyPage(() => import("./views/ProjectMilestonesView.vue"));
 const ProjectBoardView = lazyPage(() => import("./views/ProjectBoardView.vue"));
 const WorkListView = lazyPage(() => import("./views/WorkListView.vue"));
 const ProjectSelectionView = lazyPage(() => import("./views/ProjectSelectionView.vue"));
@@ -45,7 +46,7 @@ type AppRoute =
   | { identifier: string; kind: "issue" }
   | { kind: "owner"; section: OwnerSection }
   | { kind: "profile" | "notifications" }
-  | { kind: "project" | "labels" | "activity" | "deleted"; projectId: string; workspaceId: string }
+  | { kind: "project" | "labels" | "activity" | "deleted" | "milestones"; projectId: string; workspaceId: string }
   | { kind: "manage"; workspaceId: string; projectId?: string }
   | { kind: "unknown" };
 
@@ -118,11 +119,12 @@ const route = computed<AppRoute>(() => {
       : "overview";
     return { kind: "owner", section };
   }
-  const project = /^\/app\/w\/([^/]+)\/p\/([^/]+)(?:\/(labels|activity|deleted))?$/.exec(path);
+  const project = /^\/app\/w\/([^/]+)\/p\/([^/]+)(?:\/(labels|activity|deleted|milestones))?$/.exec(path);
   if (project !== null) {
     const workspaceId = decoded(project[1] ?? "");
     const projectId = decoded(project[2] ?? "");
-    if (workspaceId !== null && projectId !== null) return { kind: project[3] === "labels" || project[3] === "activity" || project[3] === "deleted" ? project[3] : "project", projectId, workspaceId };
+    const section = project[3] as "labels" | "activity" | "deleted" | "milestones" | undefined;
+    if (workspaceId !== null && projectId !== null) return { kind: section ?? "project", projectId, workspaceId };
   }
   const issue = /^\/app\/issues\/(CFK-[1-9][0-9]*)$/.exec(path);
   if (issue !== null) return { identifier: issue[1] ?? "", kind: "issue" };
@@ -143,6 +145,7 @@ watch([route, session], ([currentRoute, verifiedSession]) => {
     : currentRoute.kind === "work" ? WorkListView
     : currentRoute.kind === "project" ? ProjectBoardView
     : currentRoute.kind === "labels" ? ProjectLabelsView
+    : currentRoute.kind === "milestones" ? ProjectMilestonesView
     : currentRoute.kind === "activity" ? ProjectActivityView
     : currentRoute.kind === "deleted" ? ProjectDeletedIssuesView
     : currentRoute.kind === "issue" ? IssueDetailView
@@ -408,8 +411,8 @@ watch(currentPath, () => {
       :session="session"
       :locale-busy="localeBusy"
       :locale-retry="!!pendingLocaleSave"
-      :project-id="route.kind === 'project' || route.kind === 'labels' || route.kind === 'activity' || route.kind === 'deleted' ? route.projectId : context?.projectId"
-      :workspace-id="route.kind === 'project' || route.kind === 'labels' || route.kind === 'activity' || route.kind === 'deleted' ? route.workspaceId : context?.workspaceId"
+      :project-id="route.kind === 'project' || route.kind === 'labels' || route.kind === 'activity' || route.kind === 'deleted' || route.kind === 'milestones' ? route.projectId : context?.projectId"
+      :workspace-id="route.kind === 'project' || route.kind === 'labels' || route.kind === 'activity' || route.kind === 'deleted' || route.kind === 'milestones' ? route.workspaceId : context?.workspaceId"
       @verified="acceptVerifiedSession"
       @logout="logout"
       @locale="changeLocale"
@@ -447,6 +450,7 @@ watch(currentPath, () => {
         @context="context = $event"
       />
       <ProjectLabelsView v-else-if="route.kind === 'labels'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" @context="context = $event" />
+      <ProjectMilestonesView v-else-if="route.kind === 'milestones'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" @context="context = $event" />
       <ProjectActivityView v-else-if="route.kind === 'activity'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" :return-to="boardReturnPath(route.workspaceId, route.projectId, currentPath.split('?').slice(1).join('?'))" @navigate="navigate" @context="context = $event" />
       <ProjectDeletedIssuesView v-else-if="route.kind === 'deleted'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" :return-to="boardReturnPath(route.workspaceId, route.projectId, currentPath.split('?').slice(1).join('?'))" @navigate="navigate" @context="context = $event" />
       <IssueDetailView

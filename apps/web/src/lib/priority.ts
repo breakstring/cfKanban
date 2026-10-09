@@ -1,6 +1,6 @@
 import type { PriorityKey } from "../types";
 
-export const priorityOrder: PriorityKey[] = ["none", "low", "medium", "high", "urgent"];
+export { priorityOrder } from "./priority-values";
 export function prioritySaveIsUncertain(error: unknown): boolean {
   const status = (error as { status?: number })?.status;
   return status === undefined || status === 0 || status >= 500;

@@ -42,7 +42,7 @@ import { reconcileCompletedDraft, resetCompletionDraft } from "./drafts";
 import { e } from "./i18n";
 import { canAutoAppend } from "./pagination";
 import { emptySnapshot } from "./protocol";
-import type { ActionPayloads, Artifact, EmbedAction, EmbedLocale, EmbedSnapshot, IssueChange, Priority, PublicResource, Status } from "./protocol";
+import type { ActionPayloads, Artifact, EmbedAction, EmbedLocale, EmbedSnapshot, IssueChange, Priority, PublicMilestone, PublicResource, Status } from "./protocol";
 
 const state = ref<EmbedSnapshot>(emptySnapshot());
 const hostLocale = ref<EmbedLocale>(detectedBrowserLocale(window.navigator));
@@ -149,6 +149,25 @@ const availableLabels = computed(() => (state.value.labels ?? []).filter(label =
   && labelNameKey(label.name).includes(labelNameKey(labelSearch.value))));
 watch(showLabelPicker, opened => { if (opened) void loadLabels(false); });
 watch(() => state.value.issue?.identifier, () => { showLabelPicker.value = false; labelSearch.value = ""; });
+const showMilestonePicker = ref(false);
+const milestonesLoading = ref(false);
+const milestonesError = ref(false);
+let milestoneRequest = 0;
+const hasMilestoneProjection = computed(() => state.value.issue?.milestone !== undefined);
+const detailMilestone = computed(() => state.value.issue?.milestone ?? null);
+const milestoneOptions = computed(() => {
+  const options = state.value.milestones ?? [];
+  const current = detailMilestone.value;
+  return current && !options.some(option => option.id === current.id) ? [current, ...options] : options;
+});
+const milestoneContext = computed(() => `${instance.value?.instance_id ?? instance.value?.id}:${principal.value?.principal_id ?? principal.value?.id}:${state.value.workspace_id}:${state.value.binding?.project.id}:${state.value.issue?.identifier}`);
+watch(showMilestonePicker, opened => { if (opened) void loadMilestones(false); });
+watch(milestoneContext, () => {
+  showMilestonePicker.value = false;
+  milestonesLoading.value = false;
+  milestonesError.value = false;
+  milestoneRequest++;
+});
 const projectMenuOpen = ref(false);
 const projectSearch = ref("");
 const projectMenuAdvanced = ref(false);
@@ -330,6 +349,25 @@ async function toggleLabel(labelId: string, add: boolean): Promise<void> {
   const result = await send("mutate", { operation: add ? "label_add" : "label_remove", change: { label_id: labelId } });
   if (result.ok && !result.outcome_unknown && add) { showLabelPicker.value = false; labelSearch.value = ""; }
 }
+function milestoneLabel(milestone: PublicMilestone): string {
+  return [milestone.title, milestone.status_key === "closed" ? e("milestoneClosed") : "", milestone.due_date ?? ""].filter(Boolean).join(" · ");
+}
+async function loadMilestones(next: boolean): Promise<void> {
+  if (!hasMilestoneProjection.value || !state.value.binding || !state.value.capabilities.update || busy.value || pending.value || milestonesLoading.value || next && !state.value.milestones_has_more) return;
+  const request = ++milestoneRequest;
+  milestonesLoading.value = true;
+  milestonesError.value = false;
+  try {
+    const result = await send("milestones", { next });
+    if (request === milestoneRequest) milestonesError.value = !result.ok;
+  } finally { if (request === milestoneRequest) milestonesLoading.value = false; }
+}
+async function chooseMilestone(milestoneId: string | null): Promise<void> {
+  if (!hasMilestoneProjection.value || milestoneId !== null && !milestoneOptions.value.some(option => option.id === milestoneId)) return;
+  const context = milestoneContext.value;
+  const result = await updateDetail({ milestone_id: milestoneId });
+  if (result?.ok && !result.outcome_unknown && !pending.value && context === milestoneContext.value) showMilestonePicker.value = false;
+}
 function changeLocale(value: "en" | "zh-CN") {
   if (!state.value.binding || busy.value || pending.value) return;
   return send("set_locale", { locale: value });
@@ -339,7 +377,8 @@ function updateDetail(change: IssueChange) {
   const issue = state.value.issue;
   if (!issue || busy.value || pending.value || !state.value.capabilities.update) return;
   if (change.status_key === issue.status.key || change.priority_key === issue.priority
-    || (Object.hasOwn(change, "assignee_principal_id") && change.assignee_principal_id === (issue.assignee?.principal_id ?? null))) return;
+    || (Object.hasOwn(change, "assignee_principal_id") && change.assignee_principal_id === (issue.assignee?.principal_id ?? null))
+    || (Object.hasOwn(change, "milestone_id") && (!hasMilestoneProjection.value || change.milestone_id === (issue.milestone?.id ?? null)))) return;
   return send("mutate", { operation: "update", change });
 }
 function statusChanged(event: Event) {
@@ -532,6 +571,23 @@ async function complete() {
                   <div><dt>{{ e('status') }}</dt><dd><select v-if="state.capabilities.update" :aria-label="e('status')" :value="state.issue.status.key" :disabled="busy || pending" @change="statusChanged"><option v-for="status in statusItems" :key="status.key" :value="status.key" :disabled="status.key === 'done' && !state.capabilities.complete">{{ status.display_name || status.name || status.key }}</option></select><span v-else>{{ statusDisplayName(state.issue.status, locale) }}</span></dd></div>
                   <div><dt>{{ e('priority') }}</dt><dd><PrioritySelect v-if="state.capabilities.update" :value="state.issue.priority" :label="e('priority')" :disabled="busy || pending" @change="updateDetail({ priority_key: $event })" /><span v-else>{{ priorityText(state.issue.priority, locale === 'zh-CN') }}</span></dd></div>
                   <div><dt>{{ t('issue.assignee') }}</dt><dd><AssigneeMenu v-if="state.capabilities.update" :assignee="detailAssignee" :candidates="candidates" :has-more="!!state.assignees_has_more" :loading="peopleLoading" :disabled="(busy && !peopleLoading) || pending" @open="loadPeople(false)" @load-more="loadPeople(true)" @select="updateDetail({ assignee_principal_id: $event })" /><span v-else>{{ state.issue.assignee?.display_name || e('unassigned') }}</span></dd></div>
+                  <div v-if="hasMilestoneProjection"><dt>{{ e('milestone') }}</dt><dd>
+                    <UPopover v-if="state.capabilities.update" v-model:open="showMilestonePicker" :content="{ align: 'start' }">
+                      <UButton type="button" color="neutral" variant="ghost" size="sm" :aria-label="e('chooseMilestone')" :disabled="busy || pending">{{ detailMilestone ? milestoneLabel(detailMilestone) : e('noMilestone') }}</UButton>
+                      <template #content><div class="embedded-label-picker">
+                        <strong>{{ e('chooseMilestone') }}</strong>
+                        <p v-if="milestonesLoading" role="status">{{ e('loading') }}</p>
+                        <div class="embedded-label-options">
+                          <UButton type="button" color="neutral" variant="ghost" :aria-pressed="detailMilestone === null" :disabled="busy || pending" @click="chooseMilestone(null)">{{ e('noMilestone') }}</UButton>
+                          <UButton v-for="milestone in milestoneOptions" :key="milestone.id" type="button" color="neutral" variant="ghost" :aria-pressed="detailMilestone?.id === milestone.id" :disabled="busy || pending" @click="chooseMilestone(milestone.id)">{{ milestoneLabel(milestone) }}</UButton>
+                        </div>
+                        <p v-if="!state.milestones?.length && !milestonesLoading && !milestonesError">{{ e('noMilestones') }}</p>
+                        <UButton v-if="milestonesError" type="button" color="neutral" variant="ghost" :disabled="busy || pending" @click="loadMilestones(false)">{{ e('retryMilestones') }}</UButton>
+                        <UButton v-if="state.milestones_has_more" type="button" color="neutral" variant="ghost" :disabled="busy || pending" @click="loadMilestones(true)">{{ e('loadMore') }}</UButton>
+                      </div></template>
+                    </UPopover>
+                    <span v-else>{{ detailMilestone ? milestoneLabel(detailMilestone) : e('noMilestone') }}</span>
+                  </dd></div>
                   <div class="embedded-labels"><dt>{{ t('issue.labels') }}</dt><dd>
                     <div class="embedded-label-chips">
                       <span v-for="label in state.issue.labels" :key="label.id" class="label-chip">{{ label.name }}<button v-if="state.capabilities.update" type="button" :disabled="busy || pending" :aria-label="`${e('removeLabel')} ${label.name}`" @click="toggleLabel(label.id, false)">×</button></span>

@@ -1,7 +1,7 @@
 import { EMBED_PROTOCOL, emptySnapshot, parseActionMessage, parseRenderedMessage, parseRenderTarget, parseSnapshotMessage, sameRenderTarget, snapshotRenderTarget } from '../../../../apps/web/src/embedded/protocol.ts';
 import { readIssueHierarchy } from '../../../../apps/web/src/lib/issue-hierarchy.ts';
 import { resolveLocalePreference } from '../../../../apps/web/src/lib/locale-preference.ts';
-import { canonical, STATUSES, canCreateIssue } from './shared.mjs';
+import { canonical, STATUSES, canCreateIssue, milestoneSummary } from './shared.mjs';
 import { items, nextCursor, recoveryId, sessionReference } from './controller.mjs';
 
 export const FRAME_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox';
@@ -14,7 +14,7 @@ const strings = value => Array.isArray(value) ? value.filter(item => typeof item
 const rows = value => Array.isArray(value) ? value : [];
 const completion = value => value && typeof value === 'object' ? { ...pick(value, ['summary']), verification: strings(value.verification), artifacts: rows(value.artifacts).map(row => pick(row, ['kind', 'value'])), follow_ups: strings(value.follow_ups) } : undefined;
 const labels = value => rows(value).map(row => pick(row, ['id', 'name']));
-const issue = value => value ? { ...pick(value, ['id', 'identifier', 'title', 'body', 'version', 'priority', 'is_blocked']), ...(readIssueHierarchy(value.hierarchy) ? { hierarchy: readIssueHierarchy(value.hierarchy) } : {}), status: pick(value.status, ['key', 'display_name']), assignee: value.assignee ? resource(value.assignee) : null, labels: labels(value.labels), allowed_actions: strings(value.allowed_actions) } : null;
+const issue = value => value ? { ...pick(value, ['id', 'identifier', 'title', 'body', 'version', 'priority', 'is_blocked']), ...(value.milestone === undefined ? {} : { milestone: milestoneSummary(value.milestone) }), ...(readIssueHierarchy(value.hierarchy) ? { hierarchy: readIssueHierarchy(value.hierarchy) } : {}), status: pick(value.status, ['key', 'display_name']), assignee: value.assignee ? resource(value.assignee) : null, labels: labels(value.labels), allowed_actions: strings(value.allowed_actions) } : null;
 const comment = value => ({ ...pick(value, ['id', 'body', 'created_at', 'kind']), author: resource(value.author), ...(value.completion ? { completion: completion(value.completion) } : {}) });
 const publicError = value => value ? { code: value.code === 'PANEL_PAGINATION_STALLED' || errorCodes.has(value.code) ? value.code : 'PANEL_REQUEST_UNCERTAIN' } : null;
 export const scopeTargetId = value => `${value.instance_id}/${value.workspace_id}/${value.project_id}`;
@@ -41,6 +41,7 @@ export function projectSnapshot(state, sourceSessionId, fallbackLocale) {
     }) } : null,
     assignees: rows(state.assignees).map(row => pick(row, ['id', 'principal_id', 'display_name'])), assignees_has_more: Boolean(state.assignees_has_more),
     labels: labels(state.labels), labels_has_more: Boolean(state.labels_has_more),
+    milestones: rows(state.milestones).map(milestoneSummary), milestones_has_more: Boolean(state.milestones_has_more),
     issue: issue(state.issue), comments: rows(state.comments).map(comment), comments_has_more: Boolean(state.comments_has_more),
     filters: { assignment: state.filters.assignment, status: state.filters.status, priority: state.filters.priority }, busy: state.busy, error: publicError(state.error), pending,
     source_session_id: sessionReference(sourceSessionId), session_context_changed: Boolean(state.session_context_changed),
@@ -226,6 +227,8 @@ export class WorkbenchAdapter {
     const clean = !s.pending && !s.session_context_changed;
     const currentIssue = bound && s.issue;
     const writer = currentIssue && strings(s.issue.allowed_actions).includes('update') && clean;
+    const milestoneChangeAllowed = (change, subject) => !Object.hasOwn(change, 'milestone_id')
+      || subject?.milestone !== undefined && (change.milestone_id === null || subject.milestone?.id === change.milestone_id || rows(s.milestones).some(row => row.id === change.milestone_id));
     switch (action) {
       case 'scope_retry': this.require(changeable && s.scope_mode === 'suggested'); return c.loadScopeTargets();
       case 'scope_page': this.require(changeable && s.scope_mode === 'suggested' && (!p.next || s.scope_next_offset !== null)); return c.loadScopeTargets(p.next ? s.scope_next_offset : 0);
@@ -244,14 +247,15 @@ export class WorkbenchAdapter {
       case 'board_page': this.require(bound && c.eligibleStatuses().includes(p.status_key) && (!p.next || rows(s.board?.columns).some(column => column.key === p.status_key && column.next_cursor && !column.capacity_reached))); return c.boardPage(p.status_key, p.next);
       case 'assignees': this.require(bound && (!p.next || s.assignee_cursor)); return c.loadAssignees(p.next);
       case 'labels': this.require(bound && (!p.next || s.label_cursor)); return c.loadLabels(p.next);
+      case 'milestones': this.require(writer && s.issue.milestone !== undefined && (!p.next || s.milestone_cursor)); return c.loadMilestones(p.next);
       case 'set_locale': this.require(bound && clean); return c.setLocale(p.locale);
-      case 'quick_update': { const subject = c.loadedIssue(p.identifier); this.require(bound && clean && subject && strings(subject.allowed_actions).includes('update') && p.change.status_key !== 'done' && (p.change.assignee_principal_id == null || rows(s.assignees).some(row => row.principal_id === p.change.assignee_principal_id))); return c.quickUpdate(p.identifier, p.change); }
+      case 'quick_update': { const subject = c.loadedIssue(p.identifier); this.require(bound && clean && subject && strings(subject.allowed_actions).includes('update') && milestoneChangeAllowed(p.change, subject) && p.change.status_key !== 'done' && (p.change.assignee_principal_id == null || rows(s.assignees).some(row => row.principal_id === p.change.assignee_principal_id))); return c.quickUpdate(p.identifier, p.change); }
       case 'create_issue': this.require(bound && clean && canCreateIssue(s.binding.identity.principal, { ...s.binding, workspace_id: s.workspace_id })); return c.mutate('create', p.change);
       case 'page': this.require(bound && !p.next); return c.refresh();
       case 'open_issue': this.require(bound && (s.issue?.identifier === p.identifier || (clean && [...items(s.page), ...rows(s.board?.columns).flatMap(column => rows(column.items))].some(row => row.identifier === p.identifier || row.hierarchy?.parents?.some(parent => parent.identifier === p.identifier && parent.project_id === s.binding.project.id))))); return c.openIssue(p.identifier);
       case 'issue_back': this.require(currentIssue && clean); return c.patch({ issue: null });
       case 'comments': this.require(currentIssue && s.comments_has_more); return c.comments();
-      case 'mutate': this.require(writer && (p.operation !== 'complete' || s.issue.status.key !== 'done') && p.change.status_key !== 'done');
+      case 'mutate': this.require(writer && milestoneChangeAllowed(p.change, s.issue) && (p.operation !== 'complete' || s.issue.status.key !== 'done') && p.change.status_key !== 'done');
         if (p.operation === 'label_add') this.require(rows(s.labels).some(row => row.id === p.change.label_id) && !rows(s.issue.labels).some(row => row.id === p.change.label_id));
         if (p.operation === 'label_remove') this.require(rows(s.issue.labels).some(row => row.id === p.change.label_id));
         return c.mutate(p.operation, p.change);

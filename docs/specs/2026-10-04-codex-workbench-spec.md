@@ -4,6 +4,7 @@
 - 日期：2026-10-04
 - 关联：[CFK-600](https://cfkanban.dev/app/issues/CFK-600)
 - 基础：[本地 MCP / DSH](2026-10-02-local-mcp-dsh-spec.md)、[Foundation](2026-08-26-agent-native-kanban-foundation-spec.md)、[导航与层级](2026-10-04-issue-hierarchy-navigation-spec.md)
+- 里程碑归属增量：[项目里程碑](2026-10-09-project-milestones-spec.md#4-webagent-与-cli) 覆盖共用工作台的 Issue 归属控件、受控候选分页与兼容语义；其余工作台绑定和恢复合同继续适用。
 
 ## 范围与共用
 

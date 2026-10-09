@@ -1,6 +1,6 @@
 {
   "name": "cfkanban-agent-skills",
-  "version": "1.11.0",
+  "version": "1.12.0-rc.1",
   "description": "Portable cfKanban guidance and skills for daily collaboration, Owner administration, and safe Cloudflare deployment.",
   "author": {
     "name": "cfKanban maintainers"
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "cfKanban Agent Skills",
     "shortDescription": "Learn, use, administer, and deploy cfKanban with Agent Skills",
-    "longDescription": "Use cfkanban-howto for examples and guidance; cfkanban to find, create, edit, complete, reopen, and comment on Issues; cfkanban-admin for Owner project, access, and capacity management; and cfkanban-deploy for Cloudflare deployment, upgrades, and recovery. Project writers can change Issues; application administration requires the Deployment Owner, and deployment requires Cloudflare authorization.",
+    "longDescription": "Use cfkanban-howto for examples and guidance; cfkanban to find, create, edit, complete, reopen, and comment on Issues, maintain Project milestones, and set optional Issue milestone membership; cfkanban-admin for Owner project, access, and capacity management; and cfkanban-deploy for Cloudflare deployment, upgrades, and recovery. Project writers can change Issues and milestones; application administration requires the Deployment Owner, and deployment requires Cloudflare authorization.",
     "developerName": "cfKanban maintainers",
     "category": "Developer Tools",
     "capabilities": [

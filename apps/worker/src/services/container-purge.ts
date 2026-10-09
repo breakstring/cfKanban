@@ -21,6 +21,7 @@ function countExpressions(kind: Kind): Record<string, string> {
     attachment_bytes: "SELECT COALESCE(SUM(size_bytes),0) FROM attachment_objects WHERE id IN (SELECT id FROM issue_attachments WHERE issue_id IN (SELECT id FROM issues WHERE project_id=?1))",
     comments: "SELECT COUNT(*) FROM comments WHERE issue_id IN (SELECT id FROM issues WHERE project_id = ?1)",
     labels: "SELECT COUNT(*) FROM labels WHERE project_id = ?1",
+    milestones: "SELECT COUNT(*) FROM milestones WHERE project_id = ?1",
     relations: "SELECT COUNT(*) FROM issue_relations WHERE source_project_id = ?1 OR target_project_id = ?1",
     cross_project_relations: "SELECT COUNT(*) FROM issue_relations WHERE (source_project_id = ?1 OR target_project_id = ?1) AND source_project_id <> target_project_id",
     grants: "SELECT COUNT(*) FROM project_grants WHERE project_id = ?1",
@@ -31,7 +32,7 @@ function countExpressions(kind: Kind): Record<string, string> {
     web_sessions: "SELECT COUNT(*) FROM web_sessions WHERE json_extract(target_json, '$.project_id') = ?1",
   };
 }
-const emptyCounts = { projects: 0, issues: 0, comments: 0, attachments: 0, attachment_bytes: 0, labels: 0, relations: 0, cross_project_relations: 0, grants: 0, administrators: 0, invitations: 0, shared_invitations: 0, browser_launches: 0, web_sessions: 0 };
+const emptyCounts = { projects: 0, issues: 0, comments: 0, attachments: 0, attachment_bytes: 0, labels: 0, milestones: 0, relations: 0, cross_project_relations: 0, grants: 0, administrators: 0, invitations: 0, shared_invitations: 0, browser_launches: 0, web_sessions: 0 };
 async function readTarget(db: D1Database, workspaceId: string, projectId?: string): Promise<Target> {
   const row = projectId === undefined
     ? await db.prepare("SELECT id,display_name,version,deleted_at,id AS workspace_id FROM workspaces WHERE id = ?1 AND purged_at IS NULL").bind(workspaceId).first<Target>()
@@ -79,6 +80,7 @@ function cleanupStatements(db: D1Database, kind: Kind, targetId: string, operati
     OR (primary_subject_type='attachment' AND primary_subject_id IN (SELECT id FROM issue_attachments WHERE issue_id IN (SELECT id FROM issues WHERE project_id=?1)))
     OR (primary_subject_type='comment' AND primary_subject_id IN (SELECT id FROM comments WHERE issue_id IN (SELECT id FROM issues WHERE project_id=?1)))
     OR (primary_subject_type='label' AND primary_subject_id IN (SELECT id FROM labels WHERE project_id=?1))
+    OR (primary_subject_type='milestone' AND primary_subject_id IN (SELECT id FROM milestones WHERE project_id=?1))
     OR (primary_subject_type='relation' AND primary_subject_id IN (SELECT id FROM issue_relations WHERE source_project_id=?1 OR target_project_id=?1))
     OR primary_subject_id IN (SELECT invitation_id FROM invitation_project_grants WHERE project_id=?1)
     OR primary_subject_id IN (SELECT id FROM browser_launches WHERE json_extract(target_json,'$.project_id')=?1)
@@ -119,6 +121,7 @@ function cleanupStatements(db: D1Database, kind: Kind, targetId: string, operati
     ["issue_attachments", "issue_id IN (SELECT id FROM issues WHERE project_id=?1)"],
     ["comments", "issue_id IN (SELECT id FROM issues WHERE project_id=?1)"],
     ["issues", "project_id=?1"],
+    ["milestones", "project_id=?1"],
     ["labels", "project_id=?1"],
     ["project_grants", "project_id=?1"],
     ["project_status_names", "project_id=?1"],

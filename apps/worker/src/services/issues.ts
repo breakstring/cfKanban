@@ -1,3 +1,4 @@
+import { requireIssueMilestone } from "./milestones.ts";
 import { issueNumberRanges, typedIssueSearch } from "../../../../packages/shared/issue-search.ts";
 import {
   WORKFLOW_STATUSES,
@@ -64,6 +65,10 @@ interface IssueRow {
   deleted_by_principal_id: string | null;
   id: string;
   is_blocked: number;
+  milestone_id: string | null;
+  milestone_title: string | null;
+  milestone_status_key: "open" | "closed" | null;
+  milestone_due_date: string | null;
   number: number;
   priority_key: PriorityKey;
   priority_rank: number;
@@ -195,13 +200,16 @@ interface IssueListFilter {
   statuses: StatusKey[];
   priorities: PriorityKey[];
   labels: string[];
+  milestone: string | null;
 }
 
 const ISSUE_SELECT = `
   SELECT i.id, i.number, i.project_id, i.title, i.body, i.status_key,
          i.priority_key, i.priority_rank, i.assignee_principal_id,
          i.blocked_reason, i.version, i.deleted_at, i.created_at, i.updated_at,
-         i.deleted_by_principal_id,
+         i.deleted_by_principal_id, i.milestone_id,
+         milestone.title AS milestone_title, milestone.status_key AS milestone_status_key,
+         milestone.due_date AS milestone_due_date,
          p.display_name AS project_display_name,
          p.deleted_at AS project_deleted_at,
          p.context AS project_context, w.id AS workspace_id, w.display_name AS workspace_display_name,
@@ -231,6 +239,7 @@ const ISSUE_SELECT = `
   JOIN projects p ON p.id = i.project_id
   JOIN workspaces w ON w.id = p.workspace_id
   JOIN instance_meta instance ON instance.singleton = 1
+  LEFT JOIN milestones milestone ON milestone.id = i.milestone_id
   LEFT JOIN principals assignee ON assignee.id = i.assignee_principal_id
   LEFT JOIN project_status_names status_name
     ON status_name.project_id = i.project_id AND status_name.status_key = i.status_key`;
@@ -740,6 +749,10 @@ function issueOperationSnapshotStatement(
            'deleted_by_principal_id', i.deleted_by_principal_id,
            'id', i.id,
            'is_blocked', CASE WHEN i.blocked_reason IS NOT NULL THEN 1 ELSE 0 END,
+           'milestone_id', i.milestone_id,
+           'milestone_title', milestone.title,
+           'milestone_status_key', milestone.status_key,
+           'milestone_due_date', milestone.due_date,
            'number', i.number,
            'priority_key', i.priority_key,
            'priority_rank', i.priority_rank,
@@ -779,6 +792,7 @@ function issueOperationSnapshotStatement(
        JOIN projects p ON p.id = i.project_id
        JOIN workspaces w ON w.id = p.workspace_id
        JOIN instance_meta instance ON instance.singleton = 1
+       LEFT JOIN milestones milestone ON milestone.id = i.milestone_id
        LEFT JOIN principals assignee ON assignee.id = i.assignee_principal_id
        LEFT JOIN project_status_names status_name
          ON status_name.project_id = i.project_id AND status_name.status_key = i.status_key
@@ -890,6 +904,10 @@ function issueResource(
     identifier: `CFK-${row.number}`,
     is_blocked: row.is_blocked === 1,
     labels: labels.map((label) => ({ color: label.color, id: label.id, name: label.name })),
+    milestone: row.milestone_id == null ? null : {
+      id: row.milestone_id, title: row.milestone_title ?? "",
+      status_key: row.milestone_status_key ?? "open", due_date: row.milestone_due_date,
+    },
     needs_reassignment: row.assignee_principal_id !== null && row.assignee_available !== 1,
     number: row.number,
     priority: row.priority_key,
@@ -1086,7 +1104,11 @@ function requireIssueListFilter(url: URL, candidates = false): IssueListFilter {
   if ((!candidates && url.searchParams.getAll("blocked").length > 1) || (blocked !== null && blocked !== "only" && blocked !== "exclude")) {
     throw validationError("schema_validation_failed", { field: "blocked" });
   }
-  return { assignees, statuses, blocked, priorities, labels };
+  const rawMilestones = url.searchParams.getAll("milestone");
+  if (rawMilestones.length > 1) throw validationError("schema_validation_failed", { field: "milestone" });
+  const milestone = rawMilestones[0] === undefined ? null
+    : rawMilestones[0] === "none" ? "none" : requireUuid(rawMilestones[0], "milestone");
+  return { assignees, statuses, blocked, priorities, labels, milestone };
 }
 
 function resolvedScope(
@@ -1115,6 +1137,7 @@ function resolvedScope(
       statuses: issueFilter.statuses,
       ...(issueFilter.priorities.length === 0 ? {} : { priorities: issueFilter.priorities }),
       ...(issueFilter.labels.length === 0 ? {} : { labels: issueFilter.labels }),
+      ...(issueFilter.milestone === null ? {} : { milestone: issueFilter.milestone }),
     },
     target_identifier: scope.targetIdentifier,
     unresolved_project_targets: scope.unresolvedProjectTargets,
@@ -1130,6 +1153,7 @@ function ordinaryIssuePredicates(
   cursor: [number, number] | null,
 ): string {
   return `1 = 1
+           ${issueFilter.milestone === null ? "" : "AND i.milestone_id IS NULLIF(?13, 'none')"}
            ${issueFilter.blocked === null ? "" : `AND ${issueFilter.blocked === "exclude" ? "NOT" : ""} (
              i.blocked_reason IS NOT NULL OR (i.deleted_at IS NULL
                AND i.project_id IN (SELECT id FROM current_relation_projects)
@@ -1199,6 +1223,17 @@ function issuePageSql(
       ORDER BY ${order} LIMIT ${limit}
     )`;
   }
+  if (filter.milestone !== null) {
+    return `issue_page(number) AS MATERIALIZED (
+      SELECT i.number FROM current_result_projects selected_project
+      CROSS JOIN issues i ON i.number IN (
+        SELECT i.number FROM issues i INDEXED BY ${candidate === null ? "idx_issues_milestone_list" : "idx_issues_milestone_candidates"}
+        WHERE i.project_id = selected_project.id AND i.milestone_id IS NULLIF(?13, 'none')
+          AND ${predicates}
+        ORDER BY ${order} LIMIT ${limit}
+      ) ORDER BY ${order} LIMIT ${limit}
+    )`;
+  }
   let driver: { values: string; condition: string; index: string } | null = null;
   let index = "idx_issues_project_list";
   if (candidate !== null) {
@@ -1254,6 +1289,7 @@ async function listIssueRows(
     statuses: issueFilter.statuses,
     ...(issueFilter.priorities.length === 0 ? {} : { priorities: issueFilter.priorities }),
     ...(issueFilter.labels.length === 0 ? {} : { labels: issueFilter.labels }),
+      ...(issueFilter.milestone === null ? {} : { milestone: issueFilter.milestone }),
     workspace_targets: [...scope.workspaceTargets].sort(),
   };
   const cursorContext = await createCursorContext(
@@ -1289,8 +1325,9 @@ async function listIssueRows(
   try {
     if (candidates) {
       const cursor = parsedCursor as [number, number, number] | null;
-      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 13);
+      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 14);
       const candidatePredicates = `i.deleted_at IS NULL
+           ${issueFilter.milestone === null ? "" : "AND i.milestone_id IS NULLIF(?13, 'none')"}
            AND i.status_key = 'todo'
            ${candidate.blocked === "exclude" ? `AND i.blocked_reason IS NULL
            AND NOT EXISTS (
@@ -1360,6 +1397,7 @@ async function listIssueRows(
         JSON.stringify(scope.relationProjects.map((project) => project.projectId)),
         JSON.stringify(issueFilter.priorities.map(priorityRank)),
         JSON.stringify(issueFilter.labels),
+        issueFilter.milestone,
         ...currentAuthGuard.values,
       );
       const result = await boundCandidateStatement.all<IssueRow>();
@@ -1372,7 +1410,7 @@ async function listIssueRows(
       }
     } else {
       const cursor = parsedCursor as [number, number] | null;
-      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 13);
+      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 14);
       const ordinaryPredicates = ordinaryIssuePredicates(issueFilter, search, deletionView, cursor);
       const statement = db.prepare(
         `WITH current_result_projects(id) AS MATERIALIZED (
@@ -1437,6 +1475,7 @@ async function listIssueRows(
         JSON.stringify(scope.relationProjects.map((project) => project.projectId)),
         JSON.stringify(issueFilter.priorities),
         JSON.stringify(issueFilter.labels),
+        issueFilter.milestone,
         ...currentAuthGuard.values,
       ).all<IssueRow>();
       rows = result.results;
@@ -1606,11 +1645,12 @@ export async function countProjectIssues(
   const scope = await resolveIssueScope(db, auth, url, project);
   const search = searchFilter(url);
   const filter = requireIssueListFilter(url);
-  const guard = buildCurrentAuthGuard(auth, now, 13);
+  const guard = buildCurrentAuthGuard(auth, now, 14);
   let index = "idx_issues_active_status_order";
   const driveAssignees = filter.assignees.length > 0 && (!filter.assignees.includes("unassigned")
     || (filter.priorities.length === 0 && filter.statuses.length === 0));
-  if (driveAssignees) index = "idx_issues_active_assignee_order";
+  if (filter.milestone !== null) index = "idx_issues_milestone_list";
+  else if (driveAssignees) index = "idx_issues_active_assignee_order";
   else if (filter.priorities.length > 0) index = "idx_issues_active_priority_order";
   const labelMatches = filter.labels.length === 0 || search.prefix !== null ? "" : `, matched_label_issues(id) AS MATERIALIZED (
     SELECT DISTINCT association.issue_id
@@ -1655,6 +1695,7 @@ export async function countProjectIssues(
          ? `FROM current_result_projects result_project
             ${driveAssignees ? "CROSS JOIN json_each(?7) selected_assignee" : ""}
             CROSS JOIN issues i INDEXED BY ${index} ON i.project_id = result_project.id
+              ${filter.milestone === null ? "" : "AND i.milestone_id IS NULLIF(?13, 'none')"}
               ${driveAssignees ? "AND i.assignee_principal_id IS NULLIF(selected_assignee.value, 'unassigned')" : ""}`
          : `FROM matched_label_issues matching
             CROSS JOIN issues i ON i.id = matching.id
@@ -1665,7 +1706,7 @@ export async function countProjectIssues(
       JSON.stringify(scope.projects.map((visible) => visible.projectId)), search.number, searchValue(search),
       null, null, JSON.stringify(filter.statuses), JSON.stringify(filter.assignees), null, auth.principalId,
       JSON.stringify(scope.relationProjects.map((visible) => visible.projectId)), JSON.stringify(filter.priorities),
-      JSON.stringify(filter.labels), ...guard.values,
+      JSON.stringify(filter.labels), filter.milestone, ...guard.values,
     ).all<{ status_key: StatusKey; count: number }>();
     rows = result.results;
   } catch (error) {
@@ -2342,11 +2383,13 @@ async function diagnoseCreateIssue(
   assigneeId: string | null,
   labelIds: readonly string[],
   now: number,
+  milestoneId: string | null = null,
 ): Promise<never> {
   await verifyCurrentAuth(db, auth, now);
   const project = await authorizeProjectWrite(db, auth, workspaceId, projectId);
   if (!(await assigneeEligible(db, project.projectId, assigneeId))) throw assigneeNotEligible();
   if (!(await activeLabelsExist(db, project.projectId, labelIds))) throw notFound();
+  await requireIssueMilestone(db, project.projectId, milestoneId);
   const quota = await issueQuotaExceeded(db, project.projectId);
   if (quota.issues) throw businessQuotaExceeded("issues", quota.issueCurrent, quota.issueLimit);
   throw platformUnavailable("d1");
@@ -2388,6 +2431,8 @@ export async function createIssue(
   const priorityKey = value.priority_key === undefined ? "none" : requirePriorityKey(value.priority_key);
   const assigneeId = requireAssignee(value.assignee_principal_id);
   const labelIds = requireLabelIds(value.label_ids);
+  const milestoneId = value.milestone_id === undefined || value.milestone_id === null
+    ? null : requireUuid(value.milestone_id, "milestone_id");
   const issueId = crypto.randomUUID();
   const idempotencyKey = requireIdempotencyKey(request);
   const targetAllowed = cookieTargetAllowsProject(auth, workspaceId, projectId) ? 1 : 0;
@@ -2400,17 +2445,18 @@ export async function createIssue(
     execute: async (operationId) => {
       if (!(await assigneeEligible(db, project.projectId, assigneeId))) throw assigneeNotEligible();
       if (!(await activeLabelsExist(db, project.projectId, labelIds))) throw notFound();
+      await requireIssueMilestone(db, project.projectId, milestoneId);
       const quota = await issueQuotaExceeded(db, project.projectId);
       if (quota.issues) throw businessQuotaExceeded("issues", quota.issueCurrent, quota.issueLimit);
-      const guard = buildProjectWriterGuard(auth, now, 16, "p.id");
+      const guard = buildProjectWriterGuard(auth, now, 17, "p.id");
       const insert = db.prepare(
         `INSERT INTO issues
           (id, project_id, title, title_search, body, status_key,
            priority_key, priority_rank, assignee_principal_id, version,
            created_at, updated_at, created_by_principal_id,
-           updated_by_principal_id, created_operation_id, last_operation_id)
+           updated_by_principal_id, created_operation_id, last_operation_id, milestone_id)
          SELECT ?1, p.id, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1,
-                ?9, ?9, ?10, ?10, ?11, ?11
+                ?9, ?9, ?10, ?10, ?11, ?11, ?16
          FROM projects p
          JOIN workspaces w ON w.id = p.workspace_id
          LEFT JOIN project_usage usage ON usage.project_id = p.id
@@ -2419,6 +2465,7 @@ export async function createIssue(
            AND (SELECT COUNT(*) FROM labels label_row
                 WHERE label_row.project_id = p.id AND label_row.deleted_at IS NULL
                   AND label_row.id IN (SELECT value FROM json_each(?13))) = ?14
+           AND (?16 IS NULL OR EXISTS (SELECT 1 FROM milestones m WHERE m.id = ?16 AND m.project_id = p.id))
            AND ?15 = 1 AND ${guard.sql}
            AND (?8 IS NULL OR ?8 = (SELECT owner_principal_id FROM instance_meta WHERE singleton = 1)
                 OR EXISTS (SELECT 1 FROM effective_project_grants eligible_grant
@@ -2431,7 +2478,7 @@ export async function createIssue(
       ).bind(
         issueId, title, issueTitleSearch(title), body, statusKey, priorityKey,
         priorityRank(priorityKey), assigneeId, now, auth.principalId, operationId,
-        project.projectId, JSON.stringify(labelIds), labelIds.length, targetAllowed,
+        project.projectId, JSON.stringify(labelIds), labelIds.length, targetAllowed, milestoneId,
         ...guard.values,
       );
       const labels = db.prepare(
@@ -2469,6 +2516,7 @@ export async function createIssue(
             ),
             issueEvent(db, auth, operationId, issueId, "issue.created", {
               identifier_pending: true,
+              milestone_id: milestoneId, status_key: statusKey,
               project_id: projectId,
               workspace_id: workspaceId,
             }, now, { expectedLabelCount: labelIds.length, requireUsageCommit: true }),
@@ -2476,7 +2524,7 @@ export async function createIssue(
           committedAt: now,
           confirmBusinessRejection: async () => {
             try {
-              await diagnoseCreateIssue(db, auth, workspaceId, projectId, assigneeId, labelIds, now);
+              await diagnoseCreateIssue(db, auth, workspaceId, projectId, assigneeId, labelIds, now, milestoneId);
             } catch (error) {
               return error instanceof ApiError && error.code !== "PLATFORM_UNAVAILABLE";
             }
@@ -2490,7 +2538,7 @@ export async function createIssue(
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
-          return diagnoseCreateIssue(db, auth, workspaceId, projectId, assigneeId, labelIds, now);
+          return diagnoseCreateIssue(db, auth, workspaceId, projectId, assigneeId, labelIds, now, milestoneId);
         }
         throw error;
       }
@@ -2517,6 +2565,7 @@ export async function createIssue(
       assignee_principal_id: assigneeId,
       body,
       label_ids: labelIds,
+      milestone_id: milestoneId,
       priority_key: priorityKey,
       status_key: statusKey,
       title,
@@ -2535,6 +2584,7 @@ async function diagnoseIssueCas(
   now: number,
   expectedDeleted: boolean,
   assigneeId?: string | null,
+  milestoneId?: string | null,
 ): Promise<never> {
   await verifyCurrentAuth(db, auth, now);
   const { row } = expectedDeleted
@@ -2549,6 +2599,7 @@ async function diagnoseIssueCas(
   }
   if (row.version !== expectedVersion) throw versionConflict(row.version);
   if (expectedDeleted) requireActiveIssueParents(row);
+  if (milestoneId !== undefined) await requireIssueMilestone(db, row.project_id, milestoneId);
   if (assigneeId !== undefined && !(await assigneeEligible(db, row.project_id, assigneeId))) {
     throw assigneeNotEligible();
   }
@@ -2570,7 +2621,8 @@ export async function updateIssue(
   const hasStatus = value.status_key !== undefined;
   const hasPriority = value.priority_key !== undefined;
   const hasAssignee = Object.hasOwn(value, "assignee_principal_id");
-  if (!hasTitle && !hasBody && !hasStatus && !hasPriority && !hasAssignee) {
+  const hasMilestone = Object.hasOwn(value, "milestone_id");
+  if (!hasTitle && !hasBody && !hasStatus && !hasPriority && !hasAssignee && !hasMilestone) {
     throw validationError("update_field_required");
   }
   const title = hasTitle ? requireIssueTitle(value.title as JsonValue) : row.title;
@@ -2584,6 +2636,9 @@ export async function updateIssue(
     if (statusKey === "done") throw invalidTransition();
   }
   const priorityKey = hasPriority ? requirePriorityKey(value.priority_key as JsonValue) : row.priority_key;
+  const milestoneId = hasMilestone ? await requireIssueMilestone(db, row.project_id, value.milestone_id) : row.milestone_id;
+  const milestone = milestoneId === null ? null : await db.prepare("SELECT title, status_key, due_date FROM milestones WHERE id = ?1")
+    .bind(milestoneId).first<{ title: string; status_key: "open" | "closed"; due_date: string | null }>();
   const assigneeId = hasAssignee ? requireAssignee(value.assignee_principal_id) : row.assignee_principal_id;
   if (hasAssignee && !(await assigneeEligible(db, row.project_id, assigneeId))) throw assigneeNotEligible();
   const [labels, visibleProjects, assigneeDisplayName, statusDisplayName] = await Promise.all([
@@ -2599,7 +2654,7 @@ export async function updateIssue(
   await applyVisibleBlockedState(db, [row], visibleProjects.map((visibleProject) => visibleProject.projectId));
   const operationId = crypto.randomUUID();
   const targetAllowed = cookieTargetAllowsProject(auth, row.workspace_id, row.project_id) ? 1 : 0;
-  const guard = buildProjectWriterGuard(auth, now, 19, "issues.project_id");
+  const guard = buildProjectWriterGuard(auth, now, 21, "issues.project_id");
   let commit: OperationCommit;
   try {
     ({ commit } = await executeAtomicBatch(db, {
@@ -2613,12 +2668,14 @@ export async function updateIssue(
              priority_key = CASE WHEN ?8 = 1 THEN ?9 ELSE priority_key END,
              priority_rank = CASE WHEN ?8 = 1 THEN ?10 ELSE priority_rank END,
              assignee_principal_id = CASE WHEN ?11 = 1 THEN ?12 ELSE assignee_principal_id END,
+             milestone_id = CASE WHEN ?19 = 1 THEN ?20 ELSE milestone_id END,
              version = version + 1, updated_at = ?13,
              updated_by_principal_id = ?14, last_operation_id = ?15
            WHERE id = ?16 AND version = ?17 AND deleted_at IS NULL AND ?18 = 1
              AND EXISTS (SELECT 1 FROM projects p JOIN workspaces w ON w.id = p.workspace_id
                          WHERE p.id = issues.project_id AND p.deleted_at IS NULL AND w.deleted_at IS NULL)
              AND ${guard.sql}
+             AND (?19 = 0 OR ?20 IS NULL OR EXISTS (SELECT 1 FROM milestones m WHERE m.id = ?20 AND m.project_id = issues.project_id))
              AND (?11 = 0 OR ?12 IS NULL
                   OR ?12 = (SELECT owner_principal_id FROM instance_meta WHERE singleton = 1)
                   OR EXISTS (SELECT 1 FROM effective_project_grants eligible_grant
@@ -2632,13 +2689,15 @@ export async function updateIssue(
           hasStatus ? 1 : 0, statusKey,
           hasPriority ? 1 : 0, priorityKey, priorityRank(priorityKey),
           hasAssignee ? 1 : 0, assigneeId,
-          now, auth.principalId, operationId, row.id, expectedVersion, targetAllowed,
+          now, auth.principalId, operationId, row.id, expectedVersion, targetAllowed, hasMilestone ? 1 : 0, milestoneId,
           ...guard.values,
         ),
         issueEvent(db, auth, operationId, row.id, "issue.updated", {
           assignee_changed: hasAssignee,
           body_changed: hasBody,
           priority_changed: hasPriority,
+          milestone_changed: hasMilestone,
+          ...(hasMilestone ? { old_milestone_id: row.milestone_id, new_milestone_id: milestoneId } : {}),
           status_changed: hasStatus,
           ...(hasStatus ? {
             new_status_key: statusKey,
@@ -2650,7 +2709,7 @@ export async function updateIssue(
       committedAt: now,
       confirmBusinessRejection: async () => {
         try {
-          await diagnoseIssueCas(db, auth, identifier, expectedVersion, now, false, hasAssignee ? assigneeId : undefined);
+          await diagnoseIssueCas(db, auth, identifier, expectedVersion, now, false, hasAssignee ? assigneeId : undefined, hasMilestone ? milestoneId : undefined);
         } catch (error) {
           return error instanceof ApiError && error.code !== "PLATFORM_UNAVAILABLE";
         }
@@ -2663,7 +2722,7 @@ export async function updateIssue(
     }));
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
-      return diagnoseIssueCas(db, auth, identifier, expectedVersion, now, false, hasAssignee ? assigneeId : undefined);
+      return diagnoseIssueCas(db, auth, identifier, expectedVersion, now, false, hasAssignee ? assigneeId : undefined, hasMilestone ? milestoneId : undefined);
     }
     throw error;
   }
@@ -2676,6 +2735,8 @@ export async function updateIssue(
         : row.assignee_available,
     assignee_display_name: assigneeId === null ? null : assigneeDisplayName,
     assignee_principal_id: assigneeId,
+    milestone_id: milestoneId, milestone_title: milestone?.title ?? null,
+    milestone_status_key: milestone?.status_key ?? null, milestone_due_date: milestone?.due_date ?? null,
     body,
     priority_key: priorityKey,
     priority_rank: priorityRank(priorityKey),

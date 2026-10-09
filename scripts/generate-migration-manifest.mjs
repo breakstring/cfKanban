@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 27,
+  schema_version: 28,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -329,6 +329,17 @@ const manifest = {
       classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
       expected_artifacts: { tables: ["cloudflare_control_operations", "cloudflare_control_plans", "cloudflare_waf_target_binding", "cloudflare_waf_ownership"] },
       expected_data: { instance_meta_schema_version_at_least: 27, allow_uninitialized: true },
+    },
+    {
+      sequence: 28, name: "0028_milestones.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0028_milestones.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        tables: ["milestones"], columns: ["issues.milestone_id"],
+        indexes: ["idx_milestones_project_order", "idx_milestones_project_status_order", "idx_issues_milestone_list", "idx_issues_milestone_candidates"],
+        triggers: ["issue_milestone_project_insert", "issue_milestone_project_update", "milestone_progress_insert", "milestone_progress_update", "milestone_progress_delete"],
+      },
+      expected_data: { instance_meta_schema_version_at_least: 28, allow_uninitialized: true },
     },
   ],
 };

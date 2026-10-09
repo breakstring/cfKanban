@@ -309,8 +309,10 @@ test("OpenAPI exposes concrete Issue contracts and reserves done for complete", 
   assert.deepEqual(
     listOperation.parameters.filter((parameter) => parameter.in === "query")
       .map((parameter) => parameter.name),
-    ["priority", "label", "blocked", "deleted", "project", "workspace", "status", "assignee", "q", "cursor", "limit", "q_mode"],
+    ["priority", "label", "blocked", "deleted", "project", "workspace", "status", "assignee", "q", "cursor", "limit", "q_mode", "milestone"],
   );
+  assert.deepEqual(document.components.schemas.IssueResolvedScope.properties.filters.properties.milestone,
+    { anyOf: [{ $ref: "#/components/schemas/Uuid" }, { const: "none" }] });
   assert.equal(
     listOperation.responses["200"].content["application/json"].schema.$ref,
     "#/components/schemas/IssueListResult",

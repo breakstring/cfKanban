@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.11.0",
+    "version": "1.12.0-rc.1",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -47,6 +47,10 @@
     {
       "name": "labels",
       "description": "Project-scoped labels and single-Issue associations."
+    },
+    {
+      "name": "milestones",
+      "description": "Optional Project delivery milestones and single-Issue membership."
     },
     {
       "name": "relations",
@@ -4687,6 +4691,22 @@
               ]
             },
             "description": "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics."
+          },
+          {
+            "name": "milestone",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                {
+                  "const": "none"
+                }
+              ]
+            },
+            "description": "Match one Project milestone or only Issues without a milestone; combined with other dimensions using AND before pagination."
           }
         ],
         "responses": {
@@ -4874,6 +4894,22 @@
               ]
             },
             "description": "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics."
+          },
+          {
+            "name": "milestone",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                {
+                  "const": "none"
+                }
+              ]
+            },
+            "description": "Match one Project milestone or only Issues without a milestone; combined with other dimensions using AND before pagination."
           }
         ],
         "responses": {
@@ -5113,6 +5149,22 @@
               ]
             },
             "description": "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics."
+          },
+          {
+            "name": "milestone",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                {
+                  "const": "none"
+                }
+              ]
+            },
+            "description": "Match one Project milestone or only Issues without a milestone; combined with other dimensions using AND before pagination."
           }
         ],
         "responses": {
@@ -5412,6 +5464,22 @@
               ]
             },
             "description": "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics."
+          },
+          {
+            "name": "milestone",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                {
+                  "const": "none"
+                }
+              ]
+            },
+            "description": "Match one Project milestone or only Issues without a milestone; combined with other dimensions using AND before pagination."
           }
         ],
         "responses": {
@@ -7529,6 +7597,357 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ExpectedVersionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/milestones": {
+      "get": {
+        "operationId": "listMilestones",
+        "tags": [
+          "milestones"
+        ],
+        "summary": "List Milestones",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MilestoneListResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_reader"
+      },
+      "post": {
+        "operationId": "createMilestone",
+        "tags": [
+          "milestones"
+        ],
+        "summary": "Create Milestone",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MilestoneWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent",
+        "x-cfkanban-permission": "project_writer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMilestoneRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/milestones/{milestone_id}": {
+      "get": {
+        "operationId": "getMilestone",
+        "tags": [
+          "milestones"
+        ],
+        "summary": "Get Milestone",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "milestone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Milestone"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_reader"
+      },
+      "patch": {
+        "operationId": "updateMilestone",
+        "tags": [
+          "milestones"
+        ],
+        "summary": "Update Milestone",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "milestone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MilestoneWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "cas",
+        "x-cfkanban-permission": "project_writer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMilestoneRequest"
               }
             }
           }
@@ -14568,6 +14987,7 @@
               "attachments",
               "attachment_bytes",
               "labels",
+              "milestones",
               "relations",
               "cross_project_relations",
               "grants",
@@ -14603,6 +15023,11 @@
                 "minimum": 0
               },
               "labels": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "milestones": {
                 "type": "integer",
                 "format": "int64",
                 "minimum": 0
@@ -15223,6 +15648,17 @@
             ],
             "default": null
           },
+          "milestone_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "label_ids": {
             "type": "array",
             "items": {
@@ -15262,6 +15698,16 @@
             "$ref": "#/components/schemas/PriorityKey"
           },
           "assignee_principal_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "milestone_id": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/Uuid"
@@ -15398,6 +15844,86 @@
               }
             ],
             "default": null
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateMilestoneRequest": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "default": "",
+            "description": "Text value. Runtime limit: 8192 UTF-8 bytes.",
+            "x-cfkanban-max-utf8-bytes": 8192
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status_key": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "default": "open"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateMilestoneRequest": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "minProperties": 2,
+        "properties": {
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "description": "Text value. Runtime limit: 8192 UTF-8 bytes.",
+            "x-cfkanban-max-utf8-bytes": 8192
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status_key": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ]
           }
         },
         "additionalProperties": false
@@ -20354,6 +20880,9 @@
           "capabilities": {
             "type": "object",
             "properties": {
+              "project_milestones": {
+                "type": "boolean"
+              },
               "attachments": {
                 "type": "boolean"
               },
@@ -20426,6 +20955,10 @@
           "capabilities": {
             "type": "object",
             "properties": {
+              "project_milestones": {
+                "type": "boolean",
+                "description": "True when optional Project milestones and Issue membership are supported."
+              },
               "issue_reference": {
                 "type": "boolean",
                 "description": "True only when this Worker supports the bounded Issue reference endpoint. Absence or false is unsupported; a route 404 alone cannot prove a missing Issue."
@@ -20661,6 +21194,16 @@
           "hierarchy": {
             "$ref": "#/components/schemas/IssueHierarchy"
           },
+          "milestone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssueMilestoneSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "$ref": "#/components/schemas/Uuid"
           },
@@ -20829,6 +21372,16 @@
           },
           "hierarchy": {
             "$ref": "#/components/schemas/IssueHierarchy"
+          },
+          "milestone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssueMilestoneSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
@@ -21114,6 +21667,16 @@
           "hierarchy": {
             "$ref": "#/components/schemas/IssueHierarchy"
           },
+          "milestone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssueMilestoneSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "$ref": "#/components/schemas/Uuid"
           },
@@ -21335,6 +21898,16 @@
           },
           "hierarchy": {
             "$ref": "#/components/schemas/IssueHierarchy"
+          },
+          "milestone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssueMilestoneSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
@@ -21642,6 +22215,16 @@
                 "items": {
                   "$ref": "#/components/schemas/Uuid"
                 }
+              },
+              "milestone": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  {
+                    "const": "none"
+                  }
+                ]
               }
             },
             "additionalProperties": false
@@ -21884,6 +22467,16 @@
               },
               "hierarchy": {
                 "$ref": "#/components/schemas/IssueHierarchy"
+              },
+              "milestone": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/IssueMilestoneSummary"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "id": {
                 "$ref": "#/components/schemas/Uuid"
@@ -22218,6 +22811,16 @@
           },
           "hierarchy": {
             "$ref": "#/components/schemas/IssueHierarchy"
+          },
+          "milestone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssueMilestoneSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
@@ -23319,6 +23922,228 @@
           },
           "resource": {
             "$ref": "#/components/schemas/Comment"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueMilestoneSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status_key",
+          "due_date"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "status_key": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ]
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "MilestoneProgress": {
+        "type": "object",
+        "required": [
+          "total",
+          "done",
+          "unfinished",
+          "canceled"
+        ],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "done": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unfinished": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "canceled": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Milestone": {
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "workspace_id",
+          "title",
+          "description",
+          "due_date",
+          "status_key",
+          "version",
+          "created_at",
+          "updated_at",
+          "allowed_actions",
+          "progress"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "description": "Text value. Runtime limit: 8192 UTF-8 bytes.",
+            "x-cfkanban-max-utf8-bytes": 8192
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status_key": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "update"
+              ]
+            }
+          },
+          "progress": {
+            "$ref": "#/components/schemas/MilestoneProgress"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MilestoneListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Milestone"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "type": "object",
+            "required": [
+              "project_id",
+              "workspace_id"
+            ],
+            "properties": {
+              "project_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "project_display_name": {
+                "type": "string"
+              },
+              "workspace_display_name": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "MilestoneWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/Milestone"
           }
         },
         "additionalProperties": false

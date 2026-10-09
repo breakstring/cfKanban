@@ -1,4 +1,4 @@
-import { PANEL_PROTOCOL, uuid, scopeFailureCode, isSessionReference, STATUSES } from './shared.mjs';
+import { PANEL_PROTOCOL, uuid, scopeFailureCode, isSessionReference, STATUSES, milestoneSummary } from './shared.mjs';
 import { readIssueHierarchy } from '../../../../apps/web/src/lib/issue-hierarchy.ts';
 import { checkpointState, validateCheckpoint } from './checkpoint.mjs';
 
@@ -12,7 +12,7 @@ export const PROJECT_MENU_PROJECTS = 50;
 const COLLECTION_BYTES = 1_048_576;
 const MAX_COLLECTION_PAGES = 40;
 const fields = (value, names) => Object.fromEntries(names.filter(name => value?.[name] !== undefined).map(name => [name, structuredClone(value[name])]));
-const summary = value => ({ ...fields(value, ['id', 'identifier', 'title', 'version', 'priority', 'is_blocked']), ...(readIssueHierarchy(value.hierarchy) ? { hierarchy: readIssueHierarchy(value.hierarchy) } : {}), status: fields(value.status, ['key', 'display_name']), assignee: value.assignee ? fields(value.assignee, ['id', 'principal_id', 'display_name', 'available']) : null, allowed_actions: Array.isArray(value.allowed_actions) ? [...value.allowed_actions] : [] });
+const summary = value => ({ ...fields(value, ['id', 'identifier', 'title', 'version', 'priority', 'is_blocked']), ...(value.milestone === undefined ? {} : { milestone: milestoneSummary(value.milestone) }), ...(readIssueHierarchy(value.hierarchy) ? { hierarchy: readIssueHierarchy(value.hierarchy) } : {}), status: fields(value.status, ['key', 'display_name']), assignee: value.assignee ? fields(value.assignee, ['id', 'principal_id', 'display_name', 'available']) : null, allowed_actions: Array.isArray(value.allowed_actions) ? [...value.allowed_actions] : [] });
 function mergeRows(previous, incoming) {
   const result = new Map();
   for (const value of [...previous, ...incoming]) {
@@ -40,9 +40,13 @@ export class WorkbenchController {
     this.labelRevision = 0;
     this.labelFlights = new Map();
     this.labelCursors = new Set();
+    this.milestoneRevision = 0;
+    this.milestoneFlights = new Map();
+    this.milestoneCursors = new Set();
+    this.milestonePages = 0;
     this.projectMenuRevision = 0;
     this.projectMenuCursors = new Map();
-    this.state = { candidates: [], identity: null, workspaces: [], projects: [], project_menu_groups: [], project_menu_cursor: null, project_menu_error: null, binding: null, view: initialView === 'list' ? 'list' : 'board', board: null, group_states: {}, expanded_groups: ['backlog'], page: null, issue: null, comments: [], comment_cursor: null, labels: [], label_cursor: null, labels_has_more: false, filters: { assignment: 'all', status: '', priority: '' }, busy: 0, error: null, pending: null, source_session_id: null, session_context_changed: false, workspace_scope: null, scope_instance_id: null, scope_mode: 'manual', scope_targets: [], scope_next_offset: null };
+    this.state = { candidates: [], identity: null, workspaces: [], projects: [], project_menu_groups: [], project_menu_cursor: null, project_menu_error: null, binding: null, view: initialView === 'list' ? 'list' : 'board', board: null, group_states: {}, expanded_groups: ['backlog'], page: null, issue: null, comments: [], comment_cursor: null, labels: [], label_cursor: null, labels_has_more: false, milestones: [], milestone_cursor: null, milestones_has_more: false, filters: { assignment: 'all', status: '', priority: '' }, busy: 0, error: null, pending: null, source_session_id: null, session_context_changed: false, workspace_scope: null, scope_instance_id: null, scope_mode: 'manual', scope_targets: [], scope_next_offset: null };
   }
   getSnapshot = () => this.state;
   getCheckpoint() { return validateCheckpoint(checkpointState(this.state)); }
@@ -50,7 +54,8 @@ export class WorkbenchController {
     const checkpoint = validateCheckpoint(value);
     if (!checkpoint) { this.patch({ error: { code: 'PANEL_INVALID_INPUT' } }); return false; }
     this.projectMenuRevision++; this.projectMenuCursors.clear();
-    this.patch({ ...checkpoint.state, project_menu_groups: [], project_menu_cursor: null, project_menu_error: null, page: null, board: null, comments: [], busy: 0, error: null });
+    this.invalidateMilestones();
+    this.patch({ milestones: [], milestone_cursor: null, milestones_has_more: false, ...checkpoint.state, project_menu_groups: [], project_menu_cursor: null, project_menu_error: null, page: null, board: null, comments: [], busy: 0, error: null });
     if (checkpoint.state.expanded_groups) this.patch({ expanded_groups: checkpoint.state.expanded_groups });
     if (this.state.binding) { await this.refresh(); if (this.state.issue) await this.openIssue(this.state.issue.identifier); }
     return true;
@@ -61,16 +66,18 @@ export class WorkbenchController {
     if (Object.hasOwn(update, 'binding') && this.state.binding?.binding_id !== update.binding?.binding_id || Object.hasOwn(update, 'filters') || update.page === null || update.board === null) this.invalidateCollections();
     if (Object.hasOwn(update, 'binding') && this.state.binding?.binding_id !== update.binding?.binding_id) {
       this.labelRevision++; this.labelFlights.clear(); this.labelCursors.clear();
-      update = { expanded_groups: ['backlog'], group_states: {}, assignees: [], assignee_cursor: null, assignees_has_more: false, labels: [], label_cursor: null, labels_has_more: false, ...update };
+      this.invalidateMilestones();
+      update = { expanded_groups: ['backlog'], group_states: {}, assignees: [], assignee_cursor: null, assignees_has_more: false, labels: [], label_cursor: null, labels_has_more: false, milestones: [], milestone_cursor: null, milestones_has_more: false, ...update };
     }
     this.state = { ...this.state, ...update }; this.listeners.forEach(listener => listener());
   }
   dispose() { this.lifetime.abort(); this.listeners.clear(); }
+  invalidateMilestones() { this.milestoneRevision++; this.milestoneFlights.clear(); this.milestoneCursors.clear(); this.milestonePages = 0; }
   invalidateCollections() { this.collectionRevision++; this.collectionFlights.clear(); this.collectionCursors.clear(); this.collectionPages.clear(); }
   addCollectionValidator(validator) { this.collectionValidators.add(validator); return () => this.collectionValidators.delete(validator); }
   collectionFits(update) {
     const state = { ...this.state, ...update };
-    try { return new TextEncoder().encode(JSON.stringify({ page: state.page, board: state.board })).length <= COLLECTION_BYTES && [...this.collectionValidators].every(validate => validate(state)); }
+    try { return new TextEncoder().encode(JSON.stringify({ page: state.page, board: state.board, milestones: state.milestones })).length <= COLLECTION_BYTES && [...this.collectionValidators].every(validate => validate(state)); }
     catch { return false; }
   }
   collectionRequest(key, operation, flights = this.collectionFlights) {
@@ -95,7 +102,13 @@ export class WorkbenchController {
       const wire = await Promise.race([this.rpc.call(endpoint, { protocol: PANEL_PROTOCOL, input }, requestSignal), interrupted]);
       const result = wire.ok ? wire.value : { ok: false, error: wire.error, outcome_unknown: ['mutate', 'recover'].includes(endpoint) };
       const current = !requestSignal.aborted && this.revisions.get(channel) === revision && matches();
-      if (current && !result.ok) this.patch({ error: result.error });
+      if (current && !result.ok) {
+        if (['FORBIDDEN', 'CAPABILITY_DENIED', 'UNAUTHORIZED', 'NOT_FOUND', 'PANEL_SCOPE_DENIED', 'PANEL_PERMISSION_DENIED', 'PANEL_IDENTITY_CHANGED', 'MCP_PRINCIPAL_BINDING_MISMATCH', 'PANEL_BINDING_EXPIRED'].includes(result.error?.code)) {
+          this.invalidateMilestones();
+          this.patch({ milestones: [], milestone_cursor: null, milestones_has_more: false });
+        }
+        this.patch({ error: result.error });
+      }
       return { result, current };
     } catch {
       const result = { ok: false, outcome_unknown: ['mutate', 'recover'].includes(endpoint), error: { code: 'PANEL_REQUEST_UNCERTAIN', message: 'Request interrupted. Retain the original operation for explicit recovery.' } };
@@ -417,6 +430,46 @@ export class WorkbenchController {
       }
       return result;
     }, this.labelFlights);
+  }
+  async loadMilestones(next = false) {
+    if (!this.state.binding || (next && !this.state.milestone_cursor)) return;
+    const binding_id = this.state.binding.binding_id;
+    const initialKey = `${binding_id}:milestones:first`;
+    if (this.milestoneFlights.has(initialKey)) return this.milestoneFlights.get(initialKey);
+    if (next && (this.state.milestones.length >= ISSUE_COLLECTION_LIMIT || this.milestonePages >= MAX_COLLECTION_PAGES)) {
+      const error = { code: 'PANEL_CAPACITY' }; this.patch({ error }); return { ok: false, error };
+    }
+    if (!next) this.invalidateMilestones();
+    const revision = this.milestoneRevision;
+    const cursor = next ? this.state.milestone_cursor : undefined;
+    const key = next ? `${binding_id}:${revision}:milestones:${cursor}` : initialKey;
+    if (next && this.milestoneCursors.has(key)) { const error = { code: 'PANEL_PAGINATION_STALLED' }; this.patch({ error }); return { ok: false, error }; }
+    return this.collectionRequest(key, async () => {
+      const { result, current } = await this.request('milestones', { binding_id, ...(cursor ? { cursor } : {}) }, 'milestones', () => this.state.binding?.binding_id === binding_id && this.milestoneRevision === revision);
+      if (current && result.ok) {
+        let incoming;
+        try {
+          incoming = items(result.data).map(row => {
+            const summary = milestoneSummary(row);
+            if (summary == null) throw new Error('Invalid milestone candidate');
+            return summary;
+          });
+        }
+        catch { const error = { code: 'PANEL_INVALID_INPUT' }; this.patch({ error }); return { ok: false, error }; }
+        const milestones = [...new Map([...(next ? this.state.milestones : []), ...incoming].map(row => [row.id, row])).values()];
+        const next_cursor = nextCursor(result.data);
+        if (cursor && cursor === next_cursor || result.data?.has_more === true && !next_cursor) {
+          const error = { code: 'PANEL_PAGINATION_STALLED' }; this.patch({ error }); return { ok: false, error };
+        }
+        if (milestones.length > ISSUE_COLLECTION_LIMIT || !this.collectionFits({ milestones })) {
+          const error = { code: 'PANEL_CAPACITY' }; this.patch({ error }); return { ok: false, error };
+        }
+        if (next) this.milestoneCursors.add(key);
+        this.milestonePages = (next ? this.milestonePages : 0) + 1;
+        this.patch({ milestones, milestone_cursor: next_cursor, milestones_has_more: Boolean(next_cursor) });
+      }
+      return result;
+    }, this.milestoneFlights);
   }
   async setLocale(locale) {
     if (!this.state.binding || !this.canChangeBinding() || !['en', 'zh-CN'].includes(locale)) return;

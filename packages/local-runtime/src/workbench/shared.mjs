@@ -1,6 +1,6 @@
 export const PANEL_PROTOCOL = 1;
 export const WORKBENCH_PROTOCOL = PANEL_PROTOCOL;
-export const WORKBENCH_ENDPOINTS = Object.freeze(['workspace_scope', 'session_scope', 'scope_targets', 'bind_scope', 'connections', 'identity', 'workspaces', 'projects', 'bind', 'unbind', 'list', 'board', 'assignees', 'labels', 'detail', 'comments', 'mutate', 'recover']);
+export const WORKBENCH_ENDPOINTS = Object.freeze(['workspace_scope', 'session_scope', 'scope_targets', 'bind_scope', 'connections', 'identity', 'workspaces', 'projects', 'bind', 'unbind', 'list', 'board', 'assignees', 'labels', 'milestones', 'detail', 'comments', 'mutate', 'recover']);
 export const PRIORITIES = ['none', 'low', 'medium', 'high', 'urgent'];
 export const STATUSES = ['backlog', 'todo', 'in_progress', 'done', 'canceled'];
 export { validateCheckpoint } from './checkpoint.mjs';
@@ -45,6 +45,20 @@ export function uuid(value, name) {
     throw new PanelError('PANEL_INVALID_INPUT', `Invalid ${name}.`);
   }
   return value;
+}
+
+export function milestoneSummary(value) {
+  if (value === undefined || value === null) return value;
+  const id = uuid(value.id, 'milestone');
+  if (typeof value.title !== 'string' || !value.title.trim() || value.title !== value.title.trim() || Array.from(value.title).length > 200 || !['open', 'closed'].includes(value.status_key)) {
+    throw new PanelError('PANEL_INVALID_INPUT', 'Invalid milestone summary.');
+  }
+  const date = value.due_date;
+  if (date !== null && (typeof date !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date) || date.startsWith('0000')
+    || !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date)) {
+    throw new PanelError('PANEL_INVALID_INPUT', 'Invalid milestone date.');
+  }
+  return { id, title: value.title, status_key: value.status_key, due_date: date };
 }
 
 export function isSessionReference(value) {

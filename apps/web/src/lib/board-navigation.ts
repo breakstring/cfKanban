@@ -1,18 +1,22 @@
-import { priorityOrder } from "./priority";
+import { priorityOrder } from "./priority-values";
 import type { PriorityKey, StatusKey } from "../types";
 
-export function boardFilters(query: string): { search: string; searchMode?: "typed"; priorities: PriorityKey[]; labels: string[]; view?: "list"; status?: StatusKey; expanded?: StatusKey[] } {
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function boardFilters(query: string): { search: string; searchMode?: "typed"; priorities: PriorityKey[]; labels: string[]; milestone?: string; view?: "list"; status?: StatusKey; expanded?: StatusKey[] } {
   const params = new URLSearchParams(query);
   const knownStatuses: StatusKey[] = ["backlog", "todo", "in_progress", "done", "canceled"];
   const status = params.get("status") as StatusKey;
+  const milestones = params.getAll("milestone");
   return {
+    ...(milestones.length === 1 && (milestones[0] === "none" || uuid.test(milestones[0] ?? "")) ? { milestone: milestones[0]! } : {}),
     ...(knownStatuses.includes(status) ? { status } : {}),
     ...(params.has("expanded") ? { expanded: [...new Set(params.getAll("expanded"))].filter((key): key is StatusKey => knownStatuses.includes(key as StatusKey)) } : {}),
     ...(params.get("view") === "list" ? { view: "list" as const } : {}),
     search: params.get("q") ?? "",
     ...(params.get("q_mode") === "typed" ? { searchMode: "typed" as const } : {}),
     priorities: [...new Set(params.getAll("priority"))].filter((value): value is PriorityKey => priorityOrder.includes(value as PriorityKey)),
-    labels: [...new Set(params.getAll("label"))].filter(value => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)).slice(0, 20),
+    labels: [...new Set(params.getAll("label"))].filter(value => uuid.test(value)).slice(0, 20),
   };
 }
 
@@ -23,6 +27,7 @@ export function boardPath(workspaceId: string, projectId: string, filter?: Retur
   if (filter?.searchMode === "typed") params.set("q_mode", "typed");
   for (const priority of filter?.priorities ?? []) params.append("priority", priority);
   for (const label of filter?.labels ?? []) params.append("label", label);
+  if (filter?.milestone) params.set("milestone", filter.milestone);
   if (filter?.view === "list") params.set("view", "list");
   if (filter?.status) params.set("status", filter.status);
   if (filter?.expanded) {

@@ -99,7 +99,7 @@ export function registerWp05Routes(router: Router): Router {
       const auth = await writeAuth(request, env, context);
       const value = await body(
         request,
-        ["assignee_principal_id", "body", "label_ids", "priority_key", "status_key", "title"],
+        ["assignee_principal_id", "body", "label_ids", "milestone_id", "priority_key", "status_key", "title"],
         ["title"],
       );
       return jsonResponse(await createIssue(
@@ -131,7 +131,7 @@ export function registerWp05Routes(router: Router): Router {
       const auth = await writeAuth(request, env, context);
       const value = await body(
         request,
-        ["assignee_principal_id", "body", "expected_version", "priority_key", "status_key", "title"],
+        ["assignee_principal_id", "body", "expected_version", "milestone_id", "priority_key", "status_key", "title"],
         ["expected_version"],
       );
       return jsonResponse(await updateIssue(

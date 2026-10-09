@@ -1,5 +1,7 @@
 # Agent-native Kanban Foundation SPEC
 
+> 2026-10-09 增量：[项目里程碑](2026-10-09-project-milestones-spec.md)（Frozen）增加项目内交付节点、可选单一 Issue 归属与当前进度；趋势图单独规划。
+
 > 2026-10-01 增量：[Web Session 活动续期](2026-10-01-web-session-renewal-spec.md)（Frozen）覆盖 §5.6 固定不可续期的 Session 期限；两种登录来源遵循活动续期、30 分钟节流和 7 天绝对截止，来源撤销、scope 与其余安全边界不变。
 
 > 2026-10-01 增量：[活动历史倒序](2026-10-01-event-history-order-spec.md)（Frozen）增加显式历史浏览和 schema 16 时间索引，Web 最新在前；既有正序增量 feed 与 write cursor 保持兼容。

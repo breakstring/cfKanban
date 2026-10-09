@@ -24,6 +24,7 @@
       { "path": "usage/index", "en": "Everyday work", "zh-CN": "日常协作" },
       { "path": "usage/issues", "en": "Find & create issues", "zh-CN": "查找与创建任务" },
       { "path": "usage/workflow", "en": "Move work forward", "zh-CN": "推进与完成任务" },
+      { "path": "usage/milestones", "en": "Project milestones", "zh-CN": "项目里程碑" },
       { "path": "usage/collaboration", "en": "Comments & organization", "zh-CN": "评论、附件与整理" },
       { "path": "usage/profile", "en": "Your profile & workspace", "zh-CN": "个人设置与目录关联" },
       { "path": "administration/index", "en": "Manage your workspace", "zh-CN": "管理工作区与项目" },

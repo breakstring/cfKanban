@@ -19,6 +19,7 @@ import ErrorNotice from "../components/ErrorNotice.vue";
 import IssueAttachments from "../components/IssueAttachments.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
+import MilestoneSelect from "../components/MilestoneSelect.vue";
 import PageState from "../components/PageState.vue";
 import PrioritySelect from "../components/PrioritySelect.vue";
 import { ApiProblem, apiRequest, hasUncertainWrite } from "../lib/api";
@@ -39,6 +40,8 @@ import { labelNameKey, resolveInputLabel } from "../lib/label-input";
 import { protectNavigationDraft } from "../lib/navigation-draft";
 import { changedTextFields, useSessionTextDraft, verifySessionTextDraftIdentity } from "../lib/session-drafts";
 import { priorityOrder, prioritySaveIsUncertain, priorityText } from "../lib/priority";
+import { milestoneAssignmentChange, milestoneSelection } from "../lib/milestones";
+import { boardPath } from "../lib/board-navigation";
 import { navigate } from "../lib/router";
 import { canCreateIssueRelation } from "../lib/session-capabilities";
 import { WriteFence } from "../lib/write-fence";
@@ -80,12 +83,13 @@ const deletedCollectionLoading = ref<"comments" | "labels" | "relations" | null>
 const loading = ref(true);
 const busy = ref(false);
 const pendingPriority = ref<{ expected_version: number; priority_key: PriorityKey } | null>(null);
+const pendingMilestoneEdit = ref<Record<string, unknown> | null>(null);
 const priorityReadbackFailed = ref(false);
-const writeBusy = computed(() => busy.value || pendingPriority.value !== null);
+const writeBusy = computed(() => busy.value || pendingPriority.value !== null || pendingMilestoneEdit.value !== null);
 const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocalizedError();
 const casConflict = ref<CasConflictState | null>(null);
 const editMode = ref(false);
-const edit = ref({ body: "", priority_key: "none" as PriorityKey, title: "" });
+const edit = ref({ body: "", priority_key: "none" as PriorityKey, title: "", milestone: "none" });
 const comment = ref("");
 const completionSummary = ref("");
 const showComplete = ref(false);
@@ -110,7 +114,7 @@ const canUpdate = computed(() => issue.value?.allowed_actions.includes("update")
 const canDelete = computed(() => issue.value?.allowed_actions.includes("delete") ?? false);
 const canRestore = computed(() => issue.value?.allowed_actions.includes("restore") ?? false);
 const relationTargetCanWrite = computed(() => canCreateIssueRelation(issue.value, relationTarget.value));
-protectNavigationDraft(() => !leavingAfterDeletion && (writeBusy.value || (editMode.value && (edit.value.title !== issue.value?.title || edit.value.body !== (issue.value?.body ?? "") || edit.value.priority_key !== issue.value?.priority)) || !!comment.value.trim() || !!completionSummary.value.trim() || !!labelInput.value.trim() || !!relation.value.target_identifier.trim()));
+protectNavigationDraft(() => !leavingAfterDeletion && (writeBusy.value || (editMode.value && (edit.value.title !== issue.value?.title || edit.value.body !== (issue.value?.body ?? "") || edit.value.priority_key !== issue.value?.priority || edit.value.milestone !== milestoneSelection(issue.value?.milestone))) || !!comment.value.trim() || !!completionSummary.value.trim() || !!labelInput.value.trim() || !!relation.value.target_identifier.trim()));
 const draftPath = `/app/issues/${props.identifier}`;
 const draftCanRestore = () => issue.value?.identifier === props.identifier && issue.value.deleted_at === null && canUpdate.value && !loading.value && !writeBusy.value;
 async function readTextDraftIssue(isCurrent: () => boolean): Promise<IssueDetail | null> {
@@ -128,7 +132,7 @@ useSessionTextDraft({
     if (!latest || !isCurrent()) return false;
     const local = editMode.value && issue.value ? changedTextFields({ title: [edit.value.title, issue.value.title], body: [edit.value.body, issue.value.body ?? ""] }) : null;
     issue.value = latest; editMode.value = true;
-    edit.value = { body: latest.body ?? "", title: latest.title, priority_key: latest.priority, ...local, ...fields };
+    edit.value = { body: latest.body ?? "", title: latest.title, priority_key: latest.priority, milestone: milestoneSelection(latest.milestone), ...local, ...fields };
   },
   uncertain: () => writeFence.active || hasUncertainWrite(`/api/v1/issues/${props.identifier}`),
 });
@@ -206,6 +210,7 @@ function projectionIsCurrent(generation: number): boolean {
 
 function clearIssueProjection(): void {
   pendingPriority.value = null;
+  pendingMilestoneEdit.value = null;
   priorityReadbackFailed.value = false;
   issue.value = null;
   statuses.value = [];
@@ -308,7 +313,7 @@ async function load(preserveLocalDrafts = editMode.value, throwOnFailure = false
     issueProjectScope = resultScope;
     issue.value = result;
     if (!preserveLocalDrafts) {
-      edit.value = { body: result.body ?? "", priority_key: result.priority, title: result.title };
+      edit.value = { body: result.body ?? "", priority_key: result.priority, title: result.title, milestone: milestoneSelection(result.milestone) };
     }
     emit("context", { label: `${result.workspace.display_name} / ${result.project.display_name}`, role: roleForProject(result), workspaceId: result.workspace.id, projectId: result.project.id });
     statuses.value = statusResult.items;
@@ -465,6 +470,7 @@ async function updateIssue(payload: Record<string, unknown>, closeEditor = false
   const current = issue.value;
   if (current === null || busy.value || !canUpdate.value) return;
   if (pendingPriority.value && (payload.expected_version !== pendingPriority.value.expected_version || payload.priority_key !== pendingPriority.value.priority_key)) return;
+  if (pendingMilestoneEdit.value && JSON.stringify(payload) !== JSON.stringify(pendingMilestoneEdit.value)) return;
   const priorityOnly = Object.keys(payload).every(key => key === "priority_key" || key === "expected_version");
   const requestBody = { expected_version: current.version, ...payload };
   const wasPending = pendingPriority.value !== null;
@@ -483,8 +489,10 @@ async function updateIssue(payload: Record<string, unknown>, closeEditor = false
       issue.value = result.resource;
       priorityReadbackFailed.value = false;
       if (priorityOnly) pendingPriority.value = null;
+      pendingMilestoneEdit.value = null;
       if (closeEditor) editMode.value = false;
       else if (edit.value.priority_key === current.priority) edit.value.priority_key = result.resource.priority;
+      if (closeEditor || edit.value.milestone === milestoneSelection(current.milestone)) edit.value.milestone = milestoneSelection(result.resource.milestone);
       if (wasPending) await refreshPriorityFacts();
     }
   } catch (caught) {
@@ -492,6 +500,7 @@ async function updateIssue(payload: Record<string, unknown>, closeEditor = false
     if (priorityOnly) pendingPriority.value = prioritySaveIsUncertain(caught)
       ? { expected_version: requestBody.expected_version as number, priority_key: payload.priority_key as PriorityKey }
       : null;
+    if ("milestone_id" in requestBody) pendingMilestoneEdit.value = prioritySaveIsUncertain(caught) ? requestBody : null;
     if (!await recoverCasConflict(caught, current.identifier, payload, refreshCurrentFacts)) {
       setError(caught);
     }
@@ -531,6 +540,7 @@ async function saveEdit(): Promise<void> {
     body: edit.value.body,
     priority_key: edit.value.priority_key,
     title: edit.value.title.trim(),
+    ...milestoneAssignmentChange(edit.value.milestone, issue.value?.milestone),
   }, true);
 }
 
@@ -960,6 +970,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
   <main class="issue-page page-shell issue-page--nuxt">
     <p v-if="priorityReadbackFailed" class="warning-panel" role="status">{{ ui("Priority was saved, but the latest Issue could not be read. Retry reading the current state.", "优先级已保存，但最新事项读取失败，请重试读取当前状态。") }} <UButton color="neutral" variant="ghost" type="button" :disabled="busy" @click="refreshPriorityFacts">{{ ui("Retry reading", "重试读取") }}</UButton></p>
     <p v-if="pendingPriority" class="warning-panel" role="status">{{ ui("Priority save is unconfirmed. Verify the original operation before continuing.", "优先级保存结果尚未确认，请核实原操作后继续。") }} <UButton color="neutral" variant="ghost" type="button" :disabled="busy || !canUpdate" @click="updateIssue(pendingPriority)">{{ ui("Verify save", "核实保存") }}</UButton></p>
+    <p v-if="pendingMilestoneEdit" class="warning-panel" role="status">{{ ui('Milestone assignment save is unconfirmed. Verify the original operation before continuing.', '里程碑归属保存结果尚未确认，请核实原操作后继续。') }} <UButton color="neutral" variant="ghost" type="button" :disabled="busy || !canUpdate" @click="updateIssue(pendingMilestoneEdit, true)">{{ ui('Verify save', '核实保存') }}</UButton></p>
     <PageState :loading="loading" :error="error && !issue ? error : ''" :action-label="t('action.refresh')" @retry="load" />
     <template v-if="issue">
       <UButton color="neutral" variant="ghost" type="button" @click="backToBoard"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m8 4-6 6 6 6M2 10h15" /></svg>{{ t("action.back") }}</UButton>
@@ -971,7 +982,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
             <a class="issue-properties-link" href="#issue-properties">{{ locale === 'zh-CN' ? '查看属性' : 'View properties' }}</a>
         <template #actions>
           <IssueShare :identifier="issue.identifier" :origin="shareOrigin" />
-          <UButton color="neutral" variant="outline" v-if="canUpdate" type="button" @click="editMode = !editMode">{{ t("action.edit") }}</UButton>
+          <UButton color="neutral" variant="outline" v-if="canUpdate" type="button" :disabled="writeBusy" @click="editMode = !editMode">{{ t("action.edit") }}</UButton>
           <UButton color="primary" variant="solid" v-if="canRestore" type="button" @click="deleteOrRestore">{{ t("action.restore") }}</UButton>
           <UButton color="neutral" variant="ghost" v-else-if="canDelete" type="button" @click="showDelete = true">{{ t("action.delete") }}</UButton>
         </template>
@@ -980,10 +991,12 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
       <IssueDetailLayout properties-id="issue-properties" :properties-label="locale === 'zh-CN' ? '事项属性' : 'Issue properties'">
         <template #default>
           <form v-if="editMode" class="editor-panel form-stack" @submit.prevent="saveEdit">
-            <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<UInput v-model="edit.title" maxlength="256" required /></label>
-            <label>{{ t("issue.body") }}<UTextarea v-model="edit.body" :rows="12" /></label>
-            <label>{{ t("issue.priority") }}<USelect v-model="edit.priority_key" :items="priorityOrder.map(key => ({ value: key, label: priorityLabel(key) }))" :aria-label="t('issue.priority')" /></label>
-            <div class="form-actions"><UButton color="neutral" variant="outline" type="button" @click="editMode = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" type="submit" :disabled="writeBusy">{{ t("action.save") }}</UButton></div>
+            <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<UInput v-model="edit.title" maxlength="256" required :disabled="writeBusy || !canUpdate" /></label>
+            <label>{{ t("issue.body") }}<UTextarea v-model="edit.body" :rows="12" :disabled="writeBusy || !canUpdate" /></label>
+            <label>{{ t("issue.priority") }}<USelect v-model="edit.priority_key" :items="priorityOrder.map(key => ({ value: key, label: priorityLabel(key) }))" :aria-label="t('issue.priority')" :disabled="writeBusy || !canUpdate" /></label>
+            <MilestoneSelect v-model:value="edit.milestone" :workspace-id="issue.workspace.id" :project-id="issue.project.id" :current="issue.milestone" :reset-key="`${session.session_id}:${canUpdate}`" :disabled="writeBusy || !canUpdate" />
+            <p class="muted-copy">{{ ui('Choose No milestone to remove membership, or choose another milestone to move this Issue. Parent and child Issues are unchanged.', '选择“不归属里程碑”可移出，选择另一个里程碑可更换归属；父子事项各自设置。') }}</p>
+            <div class="form-actions"><UButton color="neutral" variant="outline" type="button" :disabled="writeBusy" @click="editMode = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" type="submit" :disabled="writeBusy || !canUpdate || !!casConflict">{{ t("action.save") }}</UButton></div>
           </form>
           <IssueContentSection v-else id="issue-description" :title="t('issue.body')">
             <template #actions><CopyButton :value="issue.body || ''" :label="ui('Copy description Markdown', '复制描述 Markdown')" /></template>
@@ -1019,6 +1032,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
               <span v-else>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
             </dd></div>
             <div><dt>{{ locale === "zh-CN" ? "更新时间" : "Updated" }}</dt><dd>{{ formatTime(issue.updated_at) }}</dd></div>
+            <div><dt>{{ ui('Milestone', '里程碑') }}</dt><dd><button v-if="issue.milestone" class="text-button" type="button" @click="navigate(boardPath(issue.workspace.id, issue.project.id, { search: '', priorities: [], labels: [], milestone: issue.milestone.id, view: 'list', expanded: ['backlog', 'todo', 'in_progress', 'done', 'canceled'] }))">{{ issue.milestone.title }}</button><span v-else>{{ ui('No milestone', '不归属里程碑') }}</span></dd></div>
           </dl>
 
           <div v-if="canUpdate" class="sidebar-actions">

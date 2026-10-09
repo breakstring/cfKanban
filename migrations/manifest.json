@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "schema_version": 27,
+  "schema_version": 28,
   "service_compatibility": {
     "minimum": "0.1.0",
     "maximum_exclusive": "0.2.0"
@@ -634,6 +634,39 @@
       },
       "expected_data": {
         "instance_meta_schema_version_at_least": 27,
+        "allow_uninitialized": true
+      }
+    },
+    {
+      "sequence": 28,
+      "name": "0028_milestones.sql",
+      "sha256": "da6843d2f9ca354bd04a2c55648d6ea7631107df23b63b34441a88e2670cae1a",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "tables": [
+          "milestones"
+        ],
+        "columns": [
+          "issues.milestone_id"
+        ],
+        "indexes": [
+          "idx_milestones_project_order",
+          "idx_milestones_project_status_order",
+          "idx_issues_milestone_list",
+          "idx_issues_milestone_candidates"
+        ],
+        "triggers": [
+          "issue_milestone_project_insert",
+          "issue_milestone_project_update",
+          "milestone_progress_insert",
+          "milestone_progress_update",
+          "milestone_progress_delete"
+        ]
+      },
+      "expected_data": {
+        "instance_meta_schema_version_at_least": 28,
         "allow_uninitialized": true
       }
     }

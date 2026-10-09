@@ -6,10 +6,13 @@ export interface AppliedBoardFilters {
   searchMode?: "typed";
   priorities: PriorityKey[];
   labels: string[];
+  milestone?: string;
 }
 
 export function matchesBoardFilters(issue: IssueSummary, filters: AppliedBoardFilters): boolean {
   if (issue.deleted_at !== null) return false;
+  if (filters.milestone === "none" && issue.milestone != null) return false;
+  if (filters.milestone && filters.milestone !== "none" && issue.milestone?.id !== filters.milestone) return false;
   if (filters.priorities.length && !filters.priorities.includes(issue.priority)) return false;
   if (filters.labels.length && !issue.labels.some(label => filters.labels.includes(label.id))) return false;
   const search = filters.search.normalize("NFKC").toLowerCase().trim();

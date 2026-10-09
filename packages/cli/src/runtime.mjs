@@ -59,7 +59,7 @@ function readbackPath(command,input,result) {
   const direct=command.apiPath.replace(/\/commands\/[^/]+$/,'');
   const entity=result?.data?.resource??result?.data?.issue??result?.data?.workspace??result?.data?.project??result?.data?.comment??result?.data?.label??result?.data?.relation??result?.data?.grant??result?.data?.notification??result?.data;
   if(command.operation==='createIssue'&&entity?.identifier) return `/api/v1/issues/${encodeURIComponent(entity.identifier)}`;
-  const byOperation={createWorkspace:'/api/v1/workspaces/',createProject:encodePath('/api/v1/workspaces/{workspace_id}/projects/',input),createComment:'/api/v1/comments/',createLabel:'/api/v1/labels/',createIssueRelation:'/api/v1/relations/',createProjectGrant:'/api/v1/admin/grants/'};
+  const byOperation={createWorkspace:'/api/v1/workspaces/',createProject:encodePath('/api/v1/workspaces/{workspace_id}/projects/',input),createComment:'/api/v1/comments/',createMilestone:'/api/v1/milestones/',createLabel:'/api/v1/labels/',createIssueRelation:'/api/v1/relations/',createProjectGrant:'/api/v1/admin/grants/'};
   if(byOperation[command.operation]&&entity?.id) return `${byOperation[command.operation]}${encodeURIComponent(entity.id)}`;
   if(API_COMMANDS.some(entry=>entry.method==='GET'&&entry.apiPath===direct)) return encodePath(direct,input);
   const list=API_COMMANDS.find(entry=>entry.method==='GET'&&entry.apiPath===command.apiPath);

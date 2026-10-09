@@ -106,11 +106,30 @@ export interface IssueStatus {
   terminal: boolean;
 }
 
+export interface IssueMilestone {
+  id: string;
+  title: string;
+  status_key: "open" | "closed";
+  due_date: string | null;
+}
+
+export interface MilestoneResource extends IssueMilestone {
+  workspace_id: string;
+  project_id: string;
+  description: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  allowed_actions: string[];
+  progress: { total: number; done: number; unfinished: number; canceled: number };
+}
+
 export interface ProjectStatusResource extends IssueStatus {
   version: number;
 }
 
 export interface IssueSummary {
+  milestone?: IssueMilestone | null;
   hierarchy?: IssueHierarchy;
   assignee: null | {
     available: boolean;

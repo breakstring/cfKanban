@@ -12,6 +12,7 @@ import AssigneeMenu from "../components/AssigneeMenu.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
+import MilestoneSelect from "../components/MilestoneSelect.vue";
 import PageState from "../components/PageState.vue";
 import IssueChildrenProgress from "../components/IssueChildrenProgress.vue";
 import ProjectSearch from "../components/ProjectSearch.vue";
@@ -87,6 +88,8 @@ const priorities = ref<PriorityKey[]>(initialFilters.priorities);
 const labelIds = ref<string[]>(initialFilters.labels);
 const appliedPriorities = ref<PriorityKey[]>([]);
 const appliedLabelIds = ref<string[]>([]);
+const selectedMilestone = ref(initialFilters.milestone ?? "all");
+const appliedMilestone = ref<string | undefined>(initialFilters.milestone);
 const filtersPending = ref(false);
 const loading = ref(true);
 const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocalizedError();
@@ -105,13 +108,14 @@ const confirmedVersions = new Map<string, number>();
 const dragged = ref<IssueSummary | null>(null);
 const showNewIssue = ref(false);
 const formBusy = ref(false);
+const pendingCreate = ref<Record<string, unknown> | null>(null);
 const casConflict = ref<CasConflictState | null>(null);
-const newIssue = ref({ body: "", priority_key: "none" as PriorityKey, status_key: "backlog" as Exclude<StatusKey, "done">, title: "" });
+const newIssue = ref({ body: "", priority_key: "none" as PriorityKey, status_key: "backlog" as Exclude<StatusKey, "done">, title: "", milestone: "none" });
 const projectionGeneration = new ProjectionGeneration();
 const writeFence = new WriteFence();
 let loadRequestId = 0;
 let filterTimer: ReturnType<typeof setTimeout> | undefined;
-const returnPath = computed(() => boardPath(props.workspaceId, props.projectId, { search: appliedSearch.value, ...(appliedSearchMode.value ? { searchMode: appliedSearchMode.value } : {}), priorities: priorities.value, labels: labelIds.value, ...(selectedStatus.value ? { status: selectedStatus.value } : {}), expanded: [...expandedGroups.value], ...(viewMode.value === "list" ? { view: "list" as const } : {}) }));
+const returnPath = computed(() => boardPath(props.workspaceId, props.projectId, { search: appliedSearch.value, ...(appliedSearchMode.value ? { searchMode: appliedSearchMode.value } : {}), priorities: priorities.value, labels: labelIds.value, ...(selectedMilestone.value !== "all" ? { milestone: selectedMilestone.value } : {}), ...(selectedStatus.value ? { status: selectedStatus.value } : {}), expanded: [...expandedGroups.value], ...(viewMode.value === "list" ? { view: "list" as const } : {}) }));
 function setView(mode: "board" | "list"): void {
   if (viewMode.value === mode) return;
   viewMode.value = mode;
@@ -139,6 +143,9 @@ function openProjectSettings(): void {
   const section = hasManagementActions(project.value) ? "management" : "activity";
   navigate(projectSettingsPath(props.workspaceId, props.projectId, section, returnPath.value), false, returnPath.value);
 }
+function openMilestones(): void {
+  navigate(`/app/w/${encodeURIComponent(props.workspaceId)}/p/${encodeURIComponent(props.projectId)}/milestones?${new URLSearchParams({ from: returnPath.value })}`, false, returnPath.value);
+}
 let casRecoveryGeneration = 0;
 let casReadback: (() => Promise<void>) | null = null;
 let casReadbackInFlight = false;
@@ -156,7 +163,7 @@ const filterProjects = computed<ProjectScopeItem[]>(() => project.value && proje
   workspace_display_name: project.value.workspace_display_name ?? "",
 }] : []);
 const hasPendingWrites = computed(() => Object.keys(pendingPriorities.value).length > 0 || Object.keys(pendingStatuses.value).length > 0 || Object.keys(pendingAssignees.value).length > 0);
-protectNavigationDraft(() => formBusy.value || saving.value.size > 0 || hasPendingWrites.value || casConflict.value !== null || (showNewIssue.value && (!!newIssue.value.title.trim() || !!newIssue.value.body.trim() || newIssue.value.priority_key !== "none" || newIssue.value.status_key !== "backlog")));
+protectNavigationDraft(() => formBusy.value || pendingCreate.value !== null || saving.value.size > 0 || hasPendingWrites.value || casConflict.value !== null || (showNewIssue.value && (!!newIssue.value.title.trim() || !!newIssue.value.body.trim() || newIssue.value.priority_key !== "none" || newIssue.value.status_key !== "backlog" || newIssue.value.milestone !== "none")));
 useSessionTextDraft({
   key: `new-issue:${props.workspaceId}:${props.projectId}`, path: `/app/w/${props.workspaceId}/p/${props.projectId}`,
   label: { en: "New Issue", zh: "新事项" }, target: () => ({ workspaceId: props.workspaceId, projectId: props.projectId }),
@@ -169,7 +176,7 @@ useSessionTextDraft({
     if (!isCurrent() || !verified || !sessionCanWriteProject(verified, props.workspaceId, props.projectId) || formBusy.value) return false;
     project.value = latest; newIssue.value = { ...newIssue.value, ...fields }; showNewIssue.value = true;
   },
-  uncertain: () => formBusy.value || hasUncertainWrite(`/api/v1/workspaces/${props.workspaceId}/projects/${props.projectId}/issues`),
+  uncertain: () => formBusy.value || pendingCreate.value !== null || hasUncertainWrite(`/api/v1/workspaces/${props.workspaceId}/projects/${props.projectId}/issues`),
 });
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
 const boardRegion = ref<HTMLElement | null>(null);
@@ -288,6 +295,7 @@ function filterParams(): URLSearchParams {
   if (appliedSearchMode.value === "typed") params.set("q_mode", "typed");
   for (const priority of appliedPriorities.value) params.append("priority", priority);
   for (const label of appliedLabelIds.value) params.append("label", label);
+  if (appliedMilestone.value) params.set("milestone", appliedMilestone.value);
   return params;
 }
 
@@ -400,6 +408,7 @@ async function load(_reset = true, throwOnFailure = false): Promise<void> {
   appliedSearch.value = search.value.trim();
   appliedPriorities.value = [...priorities.value];
   appliedLabelIds.value = [...labelIds.value];
+  appliedMilestone.value = selectedMilestone.value === "all" ? undefined : selectedMilestone.value;
   filtersPending.value = false;
   resetCounts();
   void loadCounts();
@@ -599,33 +608,37 @@ async function saveAssignee(issue: IssueSummary, principalId: string | null): Pr
 }
 
 async function createIssue(): Promise<void> {
-  if (!newIssue.value.title.trim()) return;
+  if (formBusy.value || !canWrite.value || !newIssue.value.title.trim()) return;
   const fenceKey = "issue-create";
   if (!writeFence.enter(fenceKey)) return;
   formBusy.value = true;
   const generation = projectionGeneration.capture();
+  const body = pendingCreate.value ?? {
+    body: newIssue.value.body,
+    priority_key: newIssue.value.priority_key,
+    status_key: newIssue.value.status_key,
+    title: newIssue.value.title.trim(),
+    milestone_id: newIssue.value.milestone === "none" ? null : newIssue.value.milestone,
+  };
   try {
     const result = await apiRequest<WriteResult<IssueSummary>>(
       `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues`,
       {
-        body: {
-          body: newIssue.value.body,
-          priority_key: newIssue.value.priority_key,
-          status_key: newIssue.value.status_key,
-          title: newIssue.value.title.trim(),
-        },
+        body,
         method: "POST",
       },
     );
     if (projectionIsCurrent(generation)) {
+      pendingCreate.value = null;
       await reconcileIssue(result.resource);
       if (!projectionIsCurrent(generation)) return;
       void loadCounts();
-      newIssue.value = { body: "", priority_key: "none", status_key: "backlog", title: "" };
+      newIssue.value = { body: "", priority_key: "none", status_key: "backlog", title: "", milestone: "none" };
       showNewIssue.value = false;
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
+    pendingCreate.value = prioritySaveIsUncertain(caught) ? body : null;
     setError(caught);
   } finally {
     writeFence.leave(fenceKey);
@@ -679,7 +692,7 @@ async function reconcileIssue(issue: IssueSummary, refreshAncestors = true): Pro
   if (issue.hierarchy === undefined && previous?.hierarchy) issue = { ...issue, hierarchy: previous.hierarchy };
   const statusChanged = previous && previous.status.key !== issue.status.key;
   confirmedVersions.set(issue.id, issue.version);
-  const matches = (!selectedStatus.value || selectedStatus.value === issue.status.key) && matchesBoardFilters(issue, { search: appliedSearch.value, ...(appliedSearchMode.value ? { searchMode: appliedSearchMode.value } : {}), priorities: appliedPriorities.value, labels: appliedLabelIds.value });
+  const matches = (!selectedStatus.value || selectedStatus.value === issue.status.key) && matchesBoardFilters(issue, { search: appliedSearch.value, ...(appliedSearchMode.value ? { searchMode: appliedSearchMode.value } : {}), priorities: appliedPriorities.value, labels: appliedLabelIds.value, ...(appliedMilestone.value ? { milestone: appliedMilestone.value } : {}) });
   const positions: Array<{ element: HTMLElement; top: number }> = [];
   const initialColumns: StatusKey[] = [];
   for (const key of statusOrder) {
@@ -757,7 +770,7 @@ watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), refr
 watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: true });
 watch(() => `${props.session.principal.id}:${props.session.session_id}`, refreshProjectInventory);
 watch(canWrite, writable => { if (!writable) resetAssignees(); });
-watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.value]), () => {
+watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.value, selectedMilestone.value]), () => {
   clearTimeout(filterTimer);
   projectionGeneration.invalidate();
   loadRequestId += 1;
@@ -773,6 +786,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
   filterTimer = setTimeout(async () => {
     appliedPriorities.value = [...priorities.value];
     appliedLabelIds.value = [...labelIds.value];
+    appliedMilestone.value = selectedMilestone.value === "all" ? undefined : selectedMilestone.value;
     filtersPending.value = false;
     void loadCounts();
     await Promise.all(requestedStatuses().map(status => loadColumn(status)));
@@ -800,11 +814,13 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
           <div class="board-view-bar" role="group" :aria-label="locale === 'zh-CN' ? '项目视图' : 'Project view'">
             <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'board' }" :aria-pressed="viewMode === 'board'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('board')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ locale === 'zh-CN' ? '看板' : 'Board' }}</button>
             <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'list' }" :aria-pressed="viewMode === 'list'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('list')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4h10M7 10h10M7 16h10M3 4h.01M3 10h.01M3 16h.01" /></svg>{{ locale === 'zh-CN' ? '列表' : 'List' }}</button>
+            <button type="button" class="board-view-label board-view-inactive" :disabled="saving.size > 0 || hasPendingWrites" @click="openMilestones">{{ locale === 'zh-CN' ? '里程碑' : 'Milestones' }}</button>
           </div>
           <USelect :model-value="selectedStatus ?? 'all'" :items="statusFilterItems" :aria-label="t('issue.status')" :disabled="loading || saving.size > 0 || hasPendingWrites" @update:model-value="changeStatusFilter" />
         </div>
         <ProjectSearch v-model="search" :issues="searchIssues" :project-id="projectId" :applied-search="appliedSearch" :disabled="loading || saving.size > 0 || hasPendingWrites" :reset-key="`${workspaceId}:${projectId}:${session.principal.id}:${session.session_id}`" @search="submitProjectSearch" @open="openListIssue" />
         <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || hasPendingWrites" />
+        <MilestoneSelect v-if="project" v-model:value="selectedMilestone" :workspace-id="workspaceId" :project-id="projectId" :reset-key="`${session.session_id}:${role}`" allow-any :disabled="loading || saving.size > 0 || hasPendingWrites" />
       </div>
     </header>
     <p v-if="filtersPending" class="muted-copy" role="status">{{ locale === 'zh-CN' ? '正在更新筛选结果…' : 'Updating filtered results…' }}</p>
@@ -867,7 +883,8 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
                 <span class="card-heading">
                   <strong :title="issue.title">{{ issue.title }}</strong>
                 </span>
-                <span v-if="issue.labels.length || issue.needs_reassignment || issue.hierarchy?.children.total" class="card-summary">
+                <span v-if="issue.labels.length || issue.needs_reassignment || issue.hierarchy?.children.total || issue.milestone" class="card-summary">
+                  <span v-if="issue.milestone" class="card-milestone" :title="issue.milestone.title">{{ locale === 'zh-CN' ? '里程碑' : 'Milestone' }} · {{ issue.milestone.title }}</span>
                   <span v-if="issue.labels.length" class="label-line" :title="issue.labels.map(label => label.name).join(' · ')">
                     <UBadge v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip" color="neutral" variant="soft" size="md" :title="label.name">{{ label.name }}</UBadge>
                     <span v-if="issue.labels.length > 3" class="card-label-count" :aria-label="`${locale === 'zh-CN' ? '更多标签' : 'More labels'}: ${issue.labels.slice(3).map(label => label.name).join(' · ')}`">+{{ issue.labels.length - 3 }}</span>
@@ -928,17 +945,20 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 
 
 
-    <ProjectIssueList v-if="!loading && viewMode === 'list'" :columns="columns" :statuses="statuses" :eligible-statuses="eligibleStatuses" :expanded-groups="expandedGroups" :matching-counts="appliedSearch || appliedPriorities.length || appliedLabelIds.length ? counts?.counts : undefined" @toggle="toggleListGroup" :can-write="canWrite" :saving="saving" :pending-ids="[...Object.keys(pendingPriorities), ...Object.keys(pendingStatuses), ...Object.keys(pendingAssignees)]" :assignees="assignees" :assignees-loading="assigneesLoading" :assignees-has-more="assigneesCursor !== null" :assignees-error="assigneesError" @open="openListIssue" @priority="savePriority" @status="onStatusSelection" @assignee="onAssigneeSelection" @people="ensureAssigneesLoaded" @people-more="loadAssignees(false)" @people-retry="loadAssignees()" @more="loadColumn" @scroll="onColumnScroll" />
+    <ProjectIssueList v-if="!loading && viewMode === 'list'" :columns="columns" :statuses="statuses" :eligible-statuses="eligibleStatuses" :expanded-groups="expandedGroups" :matching-counts="appliedSearch || appliedPriorities.length || appliedLabelIds.length || appliedMilestone ? counts?.counts : undefined" @toggle="toggleListGroup" :can-write="canWrite" :saving="saving" :pending-ids="[...Object.keys(pendingPriorities), ...Object.keys(pendingStatuses), ...Object.keys(pendingAssignees)]" :assignees="assignees" :assignees-loading="assigneesLoading" :assignees-has-more="assigneesCursor !== null" :assignees-error="assigneesError" @open="openListIssue" @priority="savePriority" @status="onStatusSelection" @assignee="onAssigneeSelection" @people="ensureAssigneesLoaded" @people-more="loadAssignees(false)" @people-retry="loadAssignees()" @more="loadColumn" @scroll="onColumnScroll" />
 
-    <ModalDialog v-if="showNewIssue" :busy="formBusy" :title="t('action.newIssue')" @close="showNewIssue = false">
+    <ModalDialog v-if="showNewIssue" :busy="formBusy || !!pendingCreate" :title="t('action.newIssue')" @close="showNewIssue = false">
+      <p v-if="pendingCreate" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '创建结果尚未确认，请核实原操作后继续。' : 'Creation is unconfirmed. Verify the original operation before continuing.' }} <UButton color="neutral" variant="ghost" type="button" :disabled="formBusy || !canWrite" @click="createIssue">{{ locale === 'zh-CN' ? '核实创建' : 'Verify creation' }}</UButton></p>
       <form class="form-stack" @submit.prevent="createIssue">
-        <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<UInput v-model="newIssue.title" required maxlength="256" autofocus /></label>
-        <label>{{ t("issue.body") }}<UTextarea v-model="newIssue.body" :rows="7" :placeholder="t('comment.placeholder')" /></label>
+        <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<UInput v-model="newIssue.title" required maxlength="256" autofocus :disabled="formBusy || !!pendingCreate || !canWrite" /></label>
+        <label>{{ t("issue.body") }}<UTextarea v-model="newIssue.body" :rows="7" :placeholder="t('comment.placeholder')" :disabled="formBusy || !!pendingCreate || !canWrite" /></label>
         <div class="form-grid">
-          <label>{{ t("issue.status") }}<USelect v-model="newIssue.status_key" :items="statusOrder.filter(key => key !== 'done').map(key => ({ value: key, label: statusDisplayName(statusMap.get(key) ?? { key }, locale) }))" /></label>
-          <label>{{ t("issue.priority") }}<USelect v-model="newIssue.priority_key" :items="priorityOrder.map(key => ({ value: key, label: priorityLabel(key) }))" :aria-label="t('issue.priority')" /></label>
+          <label>{{ t("issue.status") }}<USelect v-model="newIssue.status_key" :items="statusOrder.filter(key => key !== 'done').map(key => ({ value: key, label: statusDisplayName(statusMap.get(key) ?? { key }, locale) }))" :disabled="formBusy || !!pendingCreate || !canWrite" /></label>
+          <label>{{ t("issue.priority") }}<USelect v-model="newIssue.priority_key" :items="priorityOrder.map(key => ({ value: key, label: priorityLabel(key) }))" :aria-label="t('issue.priority')" :disabled="formBusy || !!pendingCreate || !canWrite" /></label>
         </div>
-        <div class="form-actions"><UButton color="neutral" variant="outline" type="button" :disabled="formBusy" @click="showNewIssue = false">{{ t("action.cancel") }}</UButton><UButton color="primary" type="submit" :loading="formBusy">{{ t("action.save") }}</UButton></div>
+        <MilestoneSelect v-model:value="newIssue.milestone" :workspace-id="workspaceId" :project-id="projectId" :reset-key="`${session.session_id}:${role}`" :disabled="formBusy || !!pendingCreate || !canWrite" />
+        <p class="muted-copy">{{ locale === 'zh-CN' ? '归属可选，一个事项最多属于一个同项目里程碑；父子事项不自动继承。' : 'Optional: one milestone in this project per Issue. Parent and child Issues do not inherit membership.' }}</p>
+        <div class="form-actions"><UButton color="neutral" variant="outline" type="button" :disabled="formBusy || !!pendingCreate" @click="showNewIssue = false">{{ t("action.cancel") }}</UButton><UButton color="primary" type="submit" :loading="formBusy" :disabled="!!pendingCreate || !canWrite">{{ t("action.save") }}</UButton></div>
       </form>
     </ModalDialog>
 
@@ -978,6 +998,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 .card-heading { display: block; }
 .card-heading > strong { font-size: 14px; line-height: 1.6; font-weight: 550; }
 .card-summary { min-height: 20px; }
+.card-milestone { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--color-text-muted); }
 .card-summary .label-line .label-chip { max-width: 45%; min-height: 20px; padding: 1px 5px; color: var(--color-text-muted); background: var(--color-surface-muted); border-radius: 4px; font-size: 12px; font-weight: 400; }
 .card-meta { flex-wrap: nowrap; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .card-assignee { display: flex; align-items: center; gap: 6px; flex: 1 1 0; text-align: left; }

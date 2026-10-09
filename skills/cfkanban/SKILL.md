@@ -1,6 +1,6 @@
 ---
 name: cfkanban
-description: Find, create, and update cfKanban Issues and priorities, Comments, relations, and completion records; join Projects and open authenticated boards. Use for daily collaboration and your profile, not scoped administration or Cloudflare deployment.
+description: Find, create, and update cfKanban Issues, Project milestones, Comments, relations, and completion records; manage optional Issue milestone membership, join Projects, and open authenticated workbenches. Use for daily collaboration and your profile, not scoped administration or Cloudflare deployment.
 ---
 
 # cfKanban
@@ -17,7 +17,7 @@ For an already joined user, lead with finding, creating, editing, changing statu
 
 ## Choose the execution path
 
-For daily operations, prefer the current host's exposed, connected cfKanban MCP when its exact schema covers the requested semantics. Discover the available tools and inspect their schemas first; use the host-returned names and namespaces, not invented tool calls. The current adapter has 20 bounded tools for connection and Project discovery, self locale preferences, Issue lists/read/create/update/complete and label add/remove, Project label lists, Comments, and relations. Read the coverage guide in [English](references/workflows.md#execution-choice-and-mcp-coverage) or [简体中文](references/workflows.zh-CN.md#执行选择与-mcp-覆盖) only when selecting a tool or checking a gap.
+For daily operations, prefer the current host's exposed, connected cfKanban MCP when its exact schema covers the requested semantics. Discover the available tools and inspect their schemas first; use the host-returned names and namespaces, not invented tool calls. The current adapter has 24 bounded tools for connection and Project discovery, self locale preferences, Issue lists/read/create/update/complete and label add/remove, Project labels and milestones, Comments, and relations. Read the coverage guide in [English](references/workflows.md#execution-choice-and-mcp-coverage) or [简体中文](references/workflows.zh-CN.md#执行选择与-mcp-覆盖) only when selecting a tool or checking a gap.
 
 Use discovered `cfkanban_connection_inspect` to inspect non-secret candidates or verify the explicitly selected instance and live Principal. It does not choose an instance for you. Reuse unchanged verified identity/scope evidence in the current task; honor any Host binding and resolve ambiguity before reading or writing. A scoped MCP read does not first require shell `help`, `capabilities`, or directory probes.
 
@@ -33,6 +33,7 @@ Keep this execution choice internal unless it explains a concrete limitation. A 
 - Read or update your own display name, saved color theme, and language preference through the profile API; the discovered locale-only MCP tool covers language changes.
 - Resolve an explicit or Repo-recommended Project scope, then list or search Issues and deterministic work candidates.
 - Create, read, edit, prioritize, assign, block, unblock, complete, reopen, soft-delete, or restore one Issue at a time.
+- List, read, create, edit, close or reopen Project milestones, and add, change or remove one Issue's optional milestone membership.
 - Add and restore Comments, manage Project Labels, and create or remove Issue relations.
 - Upload one explicitly selected local file to an Issue or download a private attachment to a new local file.
 - Redeem one Project Invite, Principal Recovery Invite, or Public Join safely.
@@ -127,6 +128,14 @@ The complete endpoint and recovery guide is [references/workflows.md](references
 ## Ordinary operations
 
 Verify trusted identity and resolve the requested Project or stable Issue identifier. Reuse unchanged identity/scope evidence from the current task; refresh the resource version before a CAS write. Use one independent Idempotency Key per atomic operation and read back the result. On response loss, keep the original request, payload/key and caller until commit state is known; do not switch from MCP to scripts or create a replacement write. A multi-call goal is not a transaction: report committed, pending, and failed operations separately.
+
+## Project milestones
+
+A Project can have zero or several milestones. Issue membership is optional and limited to one milestone in the same Project at a time; parents and children do not inherit membership. Use discovered `cfkanban_milestones_list/get/create/update`, or public CLI `milestone list/show/create/update`. `status_key=open|closed` is explicit, dates are optional, and closing a milestone does not change Issues. Creation uses one stable key; milestone PATCH is CAS-only, so an unknown result retains the exact request for verification rather than automatic replay.
+
+Issue creation/update accepts `milestone_id` (UUID or null to remove); list/counts/candidates accept `milestone` (UUID or `none`). Read current Issue version before changing membership. Progress counts explicitly associated, non-deleted Issues and separates canceled from done. Read the Project milestones section of the workflow reference for examples and pagination.
+
+The local browser and host workbenches show current membership in Issue details. Writers can choose, change or remove it using paginated candidates, including closed milestones; readers can view it. Workbench membership uses its verified Project binding and existing write recovery. Create or maintain milestones through the full Web app, CLI or discovered business MCP tools. If an older Service omits milestone support, the workbench keeps ordinary Issue details available and hides this control; source Skill updates do not update an installed bundle or Service.
 
 ## Issue priority requests
 

@@ -22,6 +22,9 @@ await build({
   outfile: workbenchModule, bundle: true, platform: "node", format: "esm", logLevel: "silent", loader: { ".png": "empty", ".svg": "dataurl" },
   plugins: [{ name: "mcp-app-workbench-test", setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path: filename }) => {
+      if (filename.endsWith("/IssueDetailLayout.vue")) return { contents: "export default { inheritAttrs: false, render() { return [this.$slots.default?.(), this.$slots.properties?.()]; } }", loader: "js" };
+      if (filename.endsWith("/Button.vue")) return { contents: 'import { h } from "vue"; export default { inheritAttrs: false, render() { return h("button", this.$attrs, this.$slots.default?.()); } }', loader: "js" };
+      if (filename.endsWith("/Popover.vue")) return { contents: "export default { inheritAttrs: false, render() { return [this.$slots.default?.(), this.$attrs.open ? this.$slots.content?.() : null]; } }", loader: "js" };
       if (!filename.endsWith("/embedded/Workbench.vue")) return { contents: "export default { inheritAttrs: false, render() { return this.$slots.default?.(); } }", loader: "js" };
       const { descriptor } = parseVue(await readFile(filename, "utf8"), { filename });
       const script = compileScript(descriptor, { id: "mcp-app-workbench-test" });
@@ -139,6 +142,82 @@ test("injected workbench creation and editing keep drafts until matching confirm
     f.snapshot({ ...f.vm.state, pending: null, issue: { ...issue, version: 2, title: "Edited title", body: "中文正文" } });
     f.respond({ ok: true }); await recovery;
     assert.equal(f.vm.showEditor, false);
+  } finally { f.close(); }
+});
+
+test("the shared MCP workbench renders confirmed milestone membership and freezes uncertain choices", async () => {
+  const f = await mountedWorkbench({ render: true });
+  const current = { id: randomUUID(), title: "Current milestone", status_key: "open", due_date: "2026-10-30" };
+  const closed = { id: randomUUID(), title: "Closed milestone", status_key: "closed", due_date: null };
+  const issue = { identifier: "CFK-714", title: "Fixture", body: "", version: 2, status: { key: "todo" }, priority: "none", milestone: current };
+  const state = { ...emptySnapshot(), binding: { project: { id: randomUUID() }, statuses: [{ key: "todo" }] }, issue, capabilities: { update: true }, milestones: [closed], milestones_has_more: true };
+  const text = target => [target.type === "#comment" ? "" : target.text, ...target.children.map(text)].join(" ");
+  const buttons = target => [target.type === "button" ? target : null, ...target.children.flatMap(buttons)].filter(Boolean);
+  const trigger = () => buttons(f.root).find(button => button.props["aria-label"] === "Choose milestone");
+  try {
+    f.snapshot(state); await nextTick();
+    assert.match(text(trigger()), /Current milestone · 2026-10-30/);
+    f.vm.showMilestonePicker = true; await nextTick();
+    assert.deepEqual(f.calls.at(-1), { action: "milestones", payload: { next: false } });
+    assert.equal(trigger().props.disabled, true, "reading options freezes membership controls");
+    f.respond({ ok: true }); await tick(); await nextTick();
+    assert.deepEqual(f.vm.milestoneOptions, [current, closed], "the current milestone is shown even when absent from the first page");
+    const selected = buttons(f.root).find(button => /Current milestone/.test(text(button)) && button.props["aria-pressed"] === true);
+    assert.ok(selected);
+    const chooseClosed = buttons(f.root).find(button => /Closed milestone · Closed/.test(text(button)));
+    const change = chooseClosed.props.onClick();
+    assert.deepEqual(f.calls.at(-1), { action: "mutate", payload: { operation: "update", change: { milestone_id: closed.id } } });
+    assert.equal(f.vm.detailMilestone.id, current.id);
+    f.snapshot({ ...state, pending: { operation: "update", identifier: issue.identifier, expected_version: issue.version } });
+    f.respond({ ok: false, outcome_unknown: true, error: { code: "EMBED_REQUEST_UNCERTAIN" } }); await change; await nextTick();
+    assert.equal(trigger().props.disabled, true);
+    assert.equal(f.vm.showMilestonePicker, true);
+    const count = f.calls.length;
+    await f.vm.chooseMilestone(null);
+    await f.vm.loadMilestones(true);
+    assert.equal(f.calls.length, count, "pending operations admit neither replacement writes nor option requests");
+    f.snapshot({ ...state, pending: null, issue: { ...issue, version: 3, milestone: closed } });
+    f.vm.localError = null; await nextTick();
+    assert.equal(f.vm.detailMilestone.id, closed.id);
+    const remove = f.vm.chooseMilestone(null);
+    assert.deepEqual(f.calls.at(-1), { action: "mutate", payload: { operation: "update", change: { milestone_id: null } } });
+    f.snapshot({ ...state, issue: { ...issue, version: 4, milestone: null } });
+    f.respond({ ok: true }); await remove; await nextTick();
+    assert.match(text(trigger()), /No milestone/);
+    f.snapshot({ ...state, capabilities: { update: false } }); await nextTick();
+    assert.equal(trigger(), undefined);
+    assert.match(text(f.root), /Current milestone/);
+    await f.vm.chooseMilestone(null);
+    assert.equal(f.calls.length, count + 1, "readers display membership without mutation controls");
+    const legacyIssue = { ...issue }; delete legacyIssue.milestone;
+    f.snapshot({ ...state, issue: legacyIssue }); await nextTick();
+    assert.equal(f.vm.hasMilestoneProjection, false);
+    assert.equal(trigger(), undefined);
+    assert.ok(!text(f.root).includes("Current milestone"), "old Services omit the milestone row");
+  } finally { f.close(); }
+});
+
+test("MCP transport forwards bounded milestone reads and single membership updates through the same action protocol", async () => {
+  const f = await connected();
+  const milestone = { id: randomUUID(), title: "Release", status_key: "closed", due_date: null };
+  try {
+    for (const next of [false, true]) {
+      const load = f.client.action("milestones", { next });
+      const request = f.sent.at(-1);
+      assert.equal(request.params.name, "cfkanban_workbench_action");
+      assert.equal(request.params.arguments.message.action, "milestones");
+      assert.deepEqual(request.params.arguments.message.payload, { next });
+      f.response(request, tool({ ...emptySnapshot(), milestones: [milestone], milestones_has_more: !next }));
+      assert.deepEqual(await load, { ok: true });
+      assert.deepEqual(f.snapshots.at(-1).milestones, [milestone]);
+    }
+    for (const milestone_id of [milestone.id, null]) {
+      const update = f.client.action("mutate", { operation: "update", change: { milestone_id } });
+      const request = f.sent.at(-1);
+      assert.deepEqual(request.params.arguments.message.payload, { operation: "update", change: { milestone_id } });
+      f.response(request, tool());
+      assert.deepEqual(await update, { ok: true });
+    }
   } finally { f.close(); }
 });
 

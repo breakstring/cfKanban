@@ -26,7 +26,7 @@ const statuses = ['backlog', 'todo', 'in_progress', 'done', 'canceled'];
 const priorities = ['none', 'low', 'medium', 'high', 'urgent'];
 const next = object({ next: { type: 'boolean' } });
 const issueFields = { title: text(256), body: text(65536, 0), status_key: enumeration(statuses.filter(key => key !== 'done')), priority_key: enumeration(priorities) };
-const change = { ...object({ ...issueFields, assignee_principal_id: { anyOf: [uuid, { type: 'null' }] } }, []), minProperties: 1 };
+const change = { ...object({ ...issueFields, assignee_principal_id: { anyOf: [uuid, { type: 'null' }] }, milestone_id: { anyOf: [uuid, { type: 'null' }] } }, []), minProperties: 1 };
 const stringList = maxLength => ({ type: 'array', items: text(maxLength), maxItems: 50 });
 const payloads = {
   scope_retry: emptyObject, scope_page: next, scope_bind: object({ target_id: text(160) }), manual: emptyObject,
@@ -35,7 +35,7 @@ const payloads = {
   project_menu: object({ workspace_id: uuid, next: { type: 'boolean' } }, []), project_switch: object({ workspace_id: uuid, project_id: uuid }),
   filters: object({ assignment: enumeration(['all', 'mine', 'unassigned']), status: enumeration(['', ...statuses]), priority: enumeration(['', ...priorities]) }),
   page: next, view: object({ mode: enumeration(['list', 'board']) }), board_page: object({ status_key: enumeration(statuses), next: { type: 'boolean' } }),
-  board_group: object({ status_key: enumeration(statuses), expanded: { type: 'boolean' } }), assignees: next, labels: next,
+  board_group: object({ status_key: enumeration(statuses), expanded: { type: 'boolean' } }), assignees: next, labels: next, milestones: next,
   set_locale: object({ locale: enumeration(['en', 'zh-CN']) }), quick_update: object({ identifier, change }), create_issue: object({ change: object(issueFields, ['title']) }), open_issue: object({ identifier }), issue_back: emptyObject, comments: emptyObject,
   mutate: { oneOf: [
     object({ operation: { const: 'update' }, change }),

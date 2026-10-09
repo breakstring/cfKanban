@@ -28,6 +28,7 @@ import { registerNotificationRoutes } from "./routes/notifications.ts";
 import { registerReleaseUpdatesRoutes } from "./routes/release-updates.ts";
 import { registerUsageRoutes } from "./routes/usage.ts";
 import { registerCloudflareControlRoutes } from "./routes/cloudflare-control.ts";
+import { registerMilestoneRoutes } from "./routes/milestones.ts";
 import { registerScopedAdministratorRoutes } from "./routes/scoped-administrators.ts";
 import { registerSearchIndexRoutes } from "./routes/search-index.ts";
 import { collectAttachmentGarbage } from "./services/attachments.ts";
@@ -71,6 +72,7 @@ registerNotificationRoutes(router);
 registerReleaseUpdatesRoutes(router);
 registerSearchIndexRoutes(router);
 registerCloudflareControlRoutes(router);
+registerMilestoneRoutes(router);
 
 function mayHaveJsonBody(request: Request): boolean {
   return request.method !== "GET" && request.method !== "HEAD" && request.body !== null;

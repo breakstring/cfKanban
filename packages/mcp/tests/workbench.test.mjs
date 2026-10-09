@@ -866,3 +866,60 @@ test('official MCP resources and tools preserve metadata, restrict the resource 
   await client.close();
   await server.close();
 });
+
+test('workbench milestone action schema matches parsing and candidates expose only current-project summaries', async t => {
+  const { McpWorkbench, workbenchTools } = await workbenchExports();
+  const f = fixture(), selected = { id: randomUUID(), title: 'Selected outside first page', status_key: 'closed', due_date: null };
+  const first = { id: randomUUID(), title: 'Open delivery', status_key: 'open', due_date: '2028-02-29' }, closed = { id: randomUUID(), title: 'Closed delivery', status_key: 'closed', due_date: null };
+  f.issue.milestone = { ...selected, description: 'PRIVATE_MILESTONE_DESCRIPTION' };
+  f.intercept((name, args) => name === 'cfkanban_milestones_list' ? ok({ items: [{ ...(args.cursor ? closed : first), project_id: f.ids.project_id, workspace_id: f.ids.workspace_id, description: 'PRIVATE_MILESTONE_DESCRIPTION' }], next_cursor: args.cursor ? null : 'PRIVATE_MILESTONE_CURSOR', has_more: !args.cursor }) : undefined);
+  const workbench = new McpWorkbench({ createFacade: f.createFacade }); t.after(() => workbench.dispose());
+  const viewId = await boundView(workbench, f);
+  const tools = workbenchTools('fixture'); const branches = tools.find(tool => tool.name === 'cfkanban_workbench_action').inputSchema.properties.message.oneOf;
+  const candidateSchema = branches.find(branch => branch.properties.action.const === 'milestones').properties.payload;
+  assert.deepEqual(candidateSchema, { type: 'object', properties: { next: { type: 'boolean' } }, required: ['next'], additionalProperties: false });
+  const update = branches.find(branch => branch.properties.action.const === 'mutate').properties.payload.oneOf.find(branch => branch.properties.operation.const === 'update');
+  assert.equal(update.properties.change.properties.milestone_id.anyOf[1].type, 'null');
+  assert.deepEqual(snapshotOf(await workbench.callTool('cfkanban_workbench_snapshot', { view_id: viewId })).issue.milestone, selected);
+  const initial = await call(workbench, viewId, action('milestones', { next: false })); assert.equal(initial.structuredContent.ok, true);
+  const next = await call(workbench, viewId, action('milestones', { next: true })); assert.equal(next.structuredContent.ok, true);
+  assert.deepEqual(snapshotOf(next).milestones, [first, closed]); assert.deepEqual(snapshotOf(next).issue.milestone, selected);
+  assert.doesNotMatch(JSON.stringify(next), /PRIVATE_MILESTONE/);
+  const reads = f.calls.filter(row => row.name === 'cfkanban_milestones_list');
+  assert.ok(reads.every(row => row.args.limit === 20 && row.args.workspace_id === f.ids.workspace_id && row.args.project_id === f.ids.project_id && !Object.hasOwn(row.args, 'status')));
+  for (const message of [action('milestones', { next: false, cursor: 'forged' }), action('mutate', { operation: 'update', change: { milestone_id: 'invalid' } })]) assert.equal((await call(workbench, viewId, message)).structuredContent.error.code, 'MCP_INVALID_ARGUMENTS');
+});
+
+test('MCP uncertain milestone clearing retains its exact original request and response-loss recovery', async t => {
+  const { McpWorkbench } = await workbenchExports(); const f = fixture();
+  const selected = { id: randomUUID(), title: 'Delivery', status_key: 'open', due_date: null }; f.issue.milestone = selected;
+  let sent = false, commits = 0; const receipts = new Map();
+  f.intercept((name, args) => {
+    if (name !== 'cfkanban_issues_update') return;
+    if (receipts.has(args.idempotency_key)) return receipts.get(args.idempotency_key);
+    commits++; f.issue.milestone = args.changes.milestone_id === null ? null : selected; f.issue.version++;
+    const result = ok({ resource: structuredClone(f.issue) }); receipts.set(args.idempotency_key, result);
+    if (!sent) { sent = true; return fail('NETWORK_ERROR', 0, true); } return result;
+  });
+  const workbench = new McpWorkbench({ createFacade: f.createFacade }); t.after(() => workbench.dispose());
+  const viewId = await boundView(workbench, f), message = action('mutate', { operation: 'update', change: { milestone_id: null } });
+  const uncertain = await call(workbench, viewId, message); assert.equal(uncertain.structuredContent.outcome_unknown, true); assert.equal(snapshotOf(uncertain).pending.operation, 'update');
+  assert.equal((await call(workbench, viewId, { ...message, payload: { operation: 'update', change: { milestone_id: selected.id } } })).structuredContent.error.code, 'PANEL_KEY_REUSED');
+  const recovered = await call(workbench, viewId, action('recover')); assert.equal(recovered.structuredContent.ok, true); assert.equal(snapshotOf(recovered).issue.milestone, null);
+  const writes = f.calls.filter(row => row.name === 'cfkanban_issues_update'); assert.equal(writes.length, 2); assert.deepEqual(writes[0].args, writes[1].args); assert.deepEqual(writes[0].args.changes, { milestone_id: null }); assert.equal(writes[0].args.expected_version, 3); assert.equal(commits, 1);
+});
+
+test('MCP reader has read-only milestone metadata and old Service omission preserves ordinary editing', async t => {
+  const { McpWorkbench } = await workbenchExports();
+  for (const reader of [true, false]) {
+    const f = fixture({ reader }); if (reader) f.issue.milestone = { id: randomUUID(), title: 'Read-only delivery', status_key: 'closed', due_date: null };
+    const workbench = new McpWorkbench({ createFacade: f.createFacade }); t.after(() => workbench.dispose()); const viewId = await boundView(workbench, f);
+    if (reader) {
+      assert.equal((await call(workbench, viewId, action('milestones', { next: false }))).structuredContent.ok, false);
+      assert.equal((await call(workbench, viewId, action('mutate', { operation: 'update', change: { milestone_id: null } }))).structuredContent.ok, false);
+      assert.equal(f.calls.some(row => row.name === 'cfkanban_milestones_list'), false);
+    } else {
+      const response = await call(workbench, viewId, action('mutate', { operation: 'update', change: { title: 'Old service edit' } })); assert.equal(response.structuredContent.ok, true); assert.equal(Object.hasOwn(snapshotOf(response).issue, 'milestone'), false);
+    }
+  }
+});

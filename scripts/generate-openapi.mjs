@@ -16,6 +16,7 @@ const tags = [
   "comments",
   "attachments",
   "labels",
+  "milestones",
   "relations",
   "invitations",
   "public-join",
@@ -33,6 +34,7 @@ const tagDescriptions = {
   attachments: "Optional private Issue files with bounded reservations, authenticated transfer, and recovery.",
   comments: "Chronological standard and immutable completion comments.",
   labels: "Project-scoped labels and single-Issue associations.",
+  milestones: "Optional Project delivery milestones and single-Issue membership.",
   relations: "Same-Workspace Issue relations, including cross-Project relations.",
   invitations: "Short-lived one-time Project and Principal recovery invitations.",
   "public-join": "Owner-controlled single-Project public enrollment and limits.",
@@ -135,6 +137,11 @@ const operations = [
   ["get", "/api/v1/comments/{comment_id}", "getComment", "comments", authenticated, "read", "IssueDetailQuery"],
   ["delete", "/api/v1/comments/{comment_id}", "deleteComment", "comments", authenticated, "cas-delete"],
   ["post", "/api/v1/comments/{comment_id}/commands/restore", "restoreComment", "comments", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
+
+  ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/milestones", "listMilestones", "milestones", authenticated, "read", "MilestoneListQuery"],
+  ["post", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/milestones", "createMilestone", "milestones", authenticated, "idempotent", "CreateMilestoneRequest"],
+  ["get", "/api/v1/milestones/{milestone_id}", "getMilestone", "milestones", authenticated, "read"],
+  ["patch", "/api/v1/milestones/{milestone_id}", "updateMilestone", "milestones", authenticated, "cas", "UpdateMilestoneRequest"],
 
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels", "listLabels", "labels", authenticated, "read", "DeletedCursorQuery"],
   ["post", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels", "createLabel", "labels", authenticated, "idempotent", "CreateLabelRequest"],
@@ -262,6 +269,7 @@ const issueSummaryProperties = {
   created_at: ref("Timestamp"),
   deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
   hierarchy: ref("IssueHierarchy"),
+  milestone: { anyOf: [ref("IssueMilestoneSummary"), { type: "null" }] },
   id: ref("Uuid"),
   identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }),
   is_blocked: { type: "boolean" },
@@ -310,7 +318,7 @@ const issueMentionReferenceProperties = {
     properties: { id: ref("Uuid"), display_name: string({ maxLength: 128 }) }, additionalProperties: false,
   },
 };
-const issueSummaryRequired = Object.keys(issueSummaryProperties).filter(name => name !== "hierarchy");
+const issueSummaryRequired = Object.keys(issueSummaryProperties).filter(name => !["hierarchy", "milestone"].includes(name));
 const issueDetailProperties = {
   ...issueSummaryProperties,
   allowed_actions: { type: "array", items: string() },
@@ -419,12 +427,13 @@ const permissionGroups = {
   workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
   project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectMemberCandidates", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
   scoped_invitation_manager: ["listInvitations", "createInvitation", "getInvitation", "revokeInvitation"],
-  project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "getIssueReference", "countProjectIssues", "listSearchIndexSnapshot", "listSearchIndexChanges"],
+  project_reader: ["listMilestones", "getMilestone", "findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "getIssueReference", "countProjectIssues", "listSearchIndexSnapshot", "listSearchIndexChanges"],
   project_reader_active_writer_tombstone: [
     "listIssues", "listProjectIssues", "getIssue",
     "listAttachments", "listComments", "getComment", "listLabels", "getLabel",
   ],
   project_writer: [
+    "createMilestone", "updateMilestone",
     "reserveAttachment", "uploadAttachment", "deleteAttachment", "restoreAttachment",
     "createIssue", "updateIssue", "deleteIssue", "restoreIssue", "assignIssueToMe", "reportIssueBlocked",
     "clearIssueBlocked", "completeIssue", "addIssueLabel", "removeIssueLabel", "createComment", "deleteComment",
@@ -582,8 +591,8 @@ const schemas = {
       },
       counts: {
         type: "object",
-        required: ["projects", "issues", "comments", "attachments", "attachment_bytes", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"],
-        properties: { ...Object.fromEntries(["projects", "issues", "comments", "attachments", "attachment_bytes", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"].map((key) => [key, integer({ minimum: 0 })])), administrators: integer({ minimum: 0, description: "Direct administrator records belonging to the target container; excludes inherited sources and ordinary Project Grants." }) },
+        required: ["projects", "issues", "comments", "attachments", "attachment_bytes", "labels", "milestones", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"],
+        properties: { ...Object.fromEntries(["projects", "issues", "comments", "attachments", "attachment_bytes", "labels", "milestones", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"].map((key) => [key, integer({ minimum: 0 })])), administrators: integer({ minimum: 0, description: "Direct administrator records belonging to the target container; excludes inherited sources and ordinary Project Grants." }) },
         additionalProperties: false,
       },
       can_purge: { type: "boolean" },
@@ -637,12 +646,14 @@ const schemas = {
   CreateProjectRequest: { type: "object", required: ["display_name"], properties: { display_name: string({ minLength: 1, maxLength: 128 }), context: nullableUtf8String(32768, { description: "Untrusted bounded Project context." }) }, additionalProperties: false },
   UpdateProjectRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }), context: nullableUtf8String(32768, { description: "Untrusted bounded Project context." }) }, additionalProperties: false },
   UpdateStatusNameRequest: { type: "object", required: ["expected_version", "display_name"], properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
-  CreateIssueRequest: { type: "object", required: ["title"], properties: { title: string({ minLength: 1, maxLength: 256 }), body: utf8String(65536, { default: "", description: "Untrusted Markdown source." }), status_key: { ...ref("NonDoneStatusKey"), default: "backlog" }, priority_key: { ...ref("PriorityKey"), default: "none" }, assignee_principal_id: { anyOf: [ref("Uuid"), { type: "null" }], default: null }, label_ids: { type: "array", items: ref("Uuid"), maxItems: 20, uniqueItems: true, default: [] } }, additionalProperties: false },
-  UpdateIssueRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), title: string({ minLength: 1, maxLength: 256 }), body: utf8String(65536, { description: "Untrusted Markdown source." }), status_key: ref("NonDoneStatusKey"), priority_key: ref("PriorityKey"), assignee_principal_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
+  CreateIssueRequest: { type: "object", required: ["title"], properties: { title: string({ minLength: 1, maxLength: 256 }), body: utf8String(65536, { default: "", description: "Untrusted Markdown source." }), status_key: { ...ref("NonDoneStatusKey"), default: "backlog" }, priority_key: { ...ref("PriorityKey"), default: "none" }, assignee_principal_id: { anyOf: [ref("Uuid"), { type: "null" }], default: null }, milestone_id: { anyOf: [ref("Uuid"), { type: "null" }], default: null }, label_ids: { type: "array", items: ref("Uuid"), maxItems: 20, uniqueItems: true, default: [] } }, additionalProperties: false },
+  UpdateIssueRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), title: string({ minLength: 1, maxLength: 256 }), body: utf8String(65536, { description: "Untrusted Markdown source." }), status_key: ref("NonDoneStatusKey"), priority_key: ref("PriorityKey"), assignee_principal_id: { anyOf: [ref("Uuid"), { type: "null" }] }, milestone_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
   ReportBlockedRequest: { type: "object", required: ["expected_version", "reason"], properties: { expected_version: ref("Version"), reason: string({ minLength: 1, maxLength: 4096 }) }, additionalProperties: false },
   CompleteIssueRequest: { type: "object", required: ["expected_version"], properties: { expected_version: ref("Version"), summary: string({ maxLength: 8192, default: "", description: "Optional completion note. Omitted, empty, or whitespace-only values are stored as an empty string." }), verification: { type: "array", items: string({ minLength: 1, maxLength: 1024 }), maxItems: 50, default: [] }, artifacts: { type: "array", items: { type: "object", required: ["kind", "value"], properties: { kind: string({ enum: ["url", "path", "commit", "other"] }), value: string({ minLength: 1, maxLength: 2048 }) }, additionalProperties: false }, maxItems: 50, default: [] }, follow_ups: { type: "array", items: string({ minLength: 1, maxLength: 2048 }), maxItems: 50, default: [] } }, additionalProperties: false, "x-cfkanban-max-utf8-bytes": 32768 },
   IssueLabelRequest: { type: "object", required: ["expected_version", "label_id"], properties: { expected_version: ref("Version"), label_id: ref("Uuid") }, additionalProperties: false },
   CreateCommentRequest: { type: "object", required: ["body"], properties: { body: utf8String(32768, { minLength: 1, description: "Append-only untrusted Comment body." }), reply_to_comment_id: { anyOf: [ref("Uuid"), { type: "null" }], default: null } }, additionalProperties: false },
+  CreateMilestoneRequest: { type: "object", required: ["title"], properties: { title: string({ minLength: 1, maxLength: 200 }), description: utf8String(8192, { default: "" }), due_date: nullableString({ format: "date" }), status_key: string({ enum: ["open", "closed"], default: "open" }) }, additionalProperties: false },
+  UpdateMilestoneRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), title: string({ minLength: 1, maxLength: 200 }), description: utf8String(8192), due_date: nullableString({ format: "date" }), status_key: string({ enum: ["open", "closed"] }) }, additionalProperties: false },
   CreateLabelRequest: { type: "object", required: ["name"], properties: { name: string({ minLength: 1, maxLength: 64 }), color: nullableString({ pattern: "^#[0-9A-Fa-f]{6}$" }) }, additionalProperties: false },
   UpdateLabelRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), name: string({ minLength: 1, maxLength: 64 }), color: nullableString({ pattern: "^#[0-9A-Fa-f]{6}$" }) }, additionalProperties: false },
   CreateRelationRequest: { type: "object", required: ["kind", "target_identifier", "source_expected_version", "target_expected_version"], properties: { kind: ref("RelationKind"), target_identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }), source_expected_version: ref("Version"), target_expected_version: ref("Version") }, additionalProperties: false },
@@ -1189,9 +1200,9 @@ const schemas = {
     },
     additionalProperties: false,
   },
-  Meta: { type: "object", required: ["service_version", "schema_version"], properties: { release_version: string(), service_version: string(), schema_version: integer({ minimum: 1 }), capabilities: { type: "object", properties: { attachments: { type: "boolean" }, browser_launch: { type: "boolean" }, fixed_workflow: { type: "boolean" }, issue_reference: { type: "boolean" }, issue_search_index: { type: "boolean" }, passkey: { type: "boolean" }, public_join: { type: "boolean" } }, additionalProperties: true } }, additionalProperties: true },
+  Meta: { type: "object", required: ["service_version", "schema_version"], properties: { release_version: string(), service_version: string(), schema_version: integer({ minimum: 1 }), capabilities: { type: "object", properties: { project_milestones: { type: "boolean" }, attachments: { type: "boolean" }, browser_launch: { type: "boolean" }, fixed_workflow: { type: "boolean" }, issue_reference: { type: "boolean" }, issue_search_index: { type: "boolean" }, passkey: { type: "boolean" }, public_join: { type: "boolean" } }, additionalProperties: true } }, additionalProperties: true },
   Health: { type: "object", required: ["service_version", "schema_version", "d1"], properties: { service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), schema_version: integer({ minimum: 1 }), d1: string({ enum: ["reachable", "unavailable"] }) }, additionalProperties: false },
-  InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { capabilities: { type: "object", properties: { issue_reference: { type: "boolean", description: "True only when this Worker supports the bounded Issue reference endpoint. Absence or false is unsupported; a route 404 alone cannot prove a missing Issue." }, issue_search_index: { type: "boolean", description: "True when metadata search status, snapshot and changes endpoints are available; clients must not use ordinary full Issue lists as a fallback." } }, additionalProperties: true }, homepage_notice: ref("PublicHomepageNotice"), discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
+  InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { capabilities: { type: "object", properties: { project_milestones: { type: "boolean", description: "True when optional Project milestones and Issue membership are supported." }, issue_reference: { type: "boolean", description: "True only when this Worker supports the bounded Issue reference endpoint. Absence or false is unsupported; a route 404 alone cannot prove a missing Issue." }, issue_search_index: { type: "boolean", description: "True when metadata search status, snapshot and changes endpoints are available; clients must not use ordinary full Issue lists as a fallback." } }, additionalProperties: true }, homepage_notice: ref("PublicHomepageNotice"), discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
   IssueLabelSummary: {
     type: "object",
     required: ["color", "id", "name"],
@@ -1359,6 +1370,7 @@ const schemas = {
           statuses: { type: "array", maxItems: 5, items: ref("StatusKey") },
           priorities: { type: "array", maxItems: 5, items: ref("PriorityKey") },
           labels: { type: "array", maxItems: 20, items: ref("Uuid") },
+          milestone: { anyOf: [ref("Uuid"), { const: "none" }] },
         },
         additionalProperties: false,
       },
@@ -1669,6 +1681,25 @@ const schemas = {
     required: ["event_cursor", "idempotent_replay", "resource"],
     properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("Comment") },
     additionalProperties: false,
+  },
+  IssueMilestoneSummary: {
+    type: "object", required: ["id", "title", "status_key", "due_date"],
+    properties: { id: ref("Uuid"), title: string({ minLength: 1, maxLength: 200 }), status_key: string({ enum: ["open", "closed"] }), due_date: nullableString({ format: "date" }) }, additionalProperties: false,
+  },
+  MilestoneProgress: {
+    type: "object", required: ["total", "done", "unfinished", "canceled"],
+    properties: Object.fromEntries(["total", "done", "unfinished", "canceled"].map(key => [key, integer({ minimum: 0 })])), additionalProperties: false,
+  },
+  Milestone: {
+    type: "object", required: ["id", "project_id", "workspace_id", "title", "description", "due_date", "status_key", "version", "created_at", "updated_at", "allowed_actions", "progress"],
+    properties: { id: ref("Uuid"), project_id: ref("Uuid"), workspace_id: ref("Uuid"), title: string({ minLength: 1, maxLength: 200 }), description: utf8String(8192), due_date: nullableString({ format: "date" }), status_key: string({ enum: ["open", "closed"] }), version: ref("Version"), created_at: ref("Timestamp"), updated_at: ref("Timestamp"), allowed_actions: { type: "array", items: string({ enum: ["read", "update"] }) }, progress: ref("MilestoneProgress") }, additionalProperties: false,
+  },
+  MilestoneListResult: {
+    type: "object", required: ["has_more", "items", "next_cursor", "resolved_scope"],
+    properties: { has_more: { type: "boolean" }, items: { type: "array", items: ref("Milestone") }, next_cursor: nullableString(), resolved_scope: { type: "object", required: ["project_id", "workspace_id"], properties: { project_id: ref("Uuid"), workspace_id: ref("Uuid"), project_display_name: string(), workspace_display_name: string() }, additionalProperties: false } }, additionalProperties: false,
+  },
+  MilestoneWriteResult: {
+    type: "object", required: ["event_cursor", "idempotent_replay", "resource"], properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("Milestone") }, additionalProperties: false,
   },
   Label: {
     type: "object",
@@ -2591,6 +2622,7 @@ const querySets = {
     { name: "cursor", in: "query", required: false, schema: string() },
     { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) },
   ],
+  MilestoneListQuery: [{ name: "status", in: "query", required: false, schema: string({ enum: ["open", "closed"] }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   CursorQuery: [{ name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   DeletedModeQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }],
   DeletedCursorQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
@@ -2602,6 +2634,7 @@ const querySets = {
   RelationDeleteQuery: [],
 };
 for (const name of ["IssueListQuery", "CandidateListQuery"]) querySets[name].push({ name: "q_mode", in: "query", required: false, schema: string({ enum: ["typed"] }), description: "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics." });
+for (const name of ["IssueListQuery", "CandidateListQuery"]) querySets[name].push({ name: "milestone", in: "query", required: false, schema: { anyOf: [ref("Uuid"), { const: "none" }] }, description: "Match one Project milestone or only Issues without a milestone; combined with other dimensions using AND before pagination." });
 querySets.IssueCountsQuery = querySets.IssueListQuery.filter(({ name }) => !["deleted", "cursor", "limit"].includes(name));
 
 const operationResponseSchemas = {
@@ -2724,6 +2757,10 @@ const operationResponseSchemas = {
   createComment: ref("CommentWriteResult"),
   deleteComment: ref("CommentWriteResult"),
   restoreComment: ref("CommentWriteResult"),
+  listMilestones: ref("MilestoneListResult"),
+  getMilestone: ref("Milestone"),
+  createMilestone: ref("MilestoneWriteResult"),
+  updateMilestone: ref("MilestoneWriteResult"),
   listLabels: ref("LabelListResult"),
   getLabel: ref("Label"),
   createLabel: ref("LabelWriteResult"),
