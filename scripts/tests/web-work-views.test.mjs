@@ -1058,10 +1058,10 @@ test('project settings tabs keep management capabilities distinct from writer ac
   assert.deepEqual(projectSettingsSections(session, workspace, p1, resource), ['labels', 'activity', 'deleted']);
   assert.deepEqual(projectSettingsSections(session, workspace, p2, projectResource({ id: p2 })), ['labels', 'activity']);
   const managed = projectResource({ allowed_actions: ['read', 'manage_members'] });
-  assert.deepEqual(projectSettingsSections(session, workspace, p1, managed), ['management', 'labels', 'activity', 'deleted']);
+  assert.deepEqual(projectSettingsSections(session, workspace, p1, managed), ['management', 'members', 'labels', 'activity', 'deleted']);
   assert.deepEqual(projectSettingsSections(session, principal, p1, managed), []);
   const owner = { ...session, principal: { ...session.principal, is_owner: true }, allowed_scope: { kind: 'instance' } };
-  assert.deepEqual(projectSettingsSections(owner, workspace, p1, managed), ['management', 'labels', 'activity', 'deleted']);
+  assert.deepEqual(projectSettingsSections(owner, workspace, p1, managed), ['management', 'members', 'labels', 'activity', 'deleted']);
   assert.deepEqual(projectSettingsSections({ ...owner, allowed_scope: { kind: 'project', workspace_id: workspace, project_id: p2 } }, workspace, p1, managed), []);
   assert.deepEqual(projectSettingsSections(session, workspace, p1, null), []);
   const archived = projectResource({ deleted_at: '2026-10-01T00:00:00Z', allowed_actions: ['read', 'restore'] });
@@ -1073,11 +1073,12 @@ test('project settings tabs keep management capabilities distinct from writer ac
 
 test('project settings preserve legacy routes and only carry verified same-project board filters', () => {
   const filtered = boardPath(workspace, p1, { search: 'design', priorities: ['high'], labels: [] });
-  for (const section of ['management', 'labels', 'activity', 'deleted']) {
+  for (const section of ['management', 'members', 'labels', 'activity', 'deleted']) {
     const path = projectSettingsPath(workspace, p1, section, filtered);
     const url = new URL(path, 'https://local.test');
-    assert.equal(url.pathname, section === 'management' ? '/app/manage' : `${boardPath(workspace, p1)}/${section}`);
-    if (section === 'management') { assert.equal(url.searchParams.get('workspace'), workspace); assert.equal(url.searchParams.get('project'), p1); }
+    assert.equal(url.pathname, ['management', 'members'].includes(section) ? '/app/manage' : `${boardPath(workspace, p1)}/${section}`);
+    if (['management', 'members'].includes(section)) { assert.equal(url.searchParams.get('workspace'), workspace); assert.equal(url.searchParams.get('project'), p1); }
+    assert.equal(url.searchParams.get('section'), section === 'members' ? 'members' : null);
     assert.equal(url.searchParams.get('from'), filtered);
     for (const invalid of ['https://other.invalid/', boardPath(workspace, p2), `${boardPath(workspace, p1)}/activity`]) {
       assert.equal(new URL(projectSettingsPath(workspace, p1, section, invalid), 'https://local.test').searchParams.get('from'), boardPath(workspace, p1));
@@ -1091,7 +1092,7 @@ const ownerWorkspacesPath = `/app/admin?section=workspaces&workspace=${workspace
 
 test('Owner settings return sources accept only one fixed target with instance control-plane access', () => {
   assert.equal(ownerWorkspaceSettingsPath(workspace), `/app/manage?workspace=${workspace}&section=settings&return=owner-workspaces`);
-  for (const section of ['management', 'labels', 'activity', 'deleted']) {
+  for (const section of ['management', 'members', 'labels', 'activity', 'deleted']) {
     const url = new URL(ownerProjectSettingsPath(workspace, p1, section), 'https://local.test');
     assert.equal(url.searchParams.get('return'), 'owner-workspaces');
     assert.equal(url.searchParams.get('from'), boardPath(workspace, p1));
@@ -1119,10 +1120,10 @@ test('Owner project settings preserve the fixed return target across tabs and dr
   const Wrapper = { setup: () => () => h(SettingsHeader, { session: currentSession.value, workspaceId: workspace, projectId: p1, project: resource, section: 'management', returnTo: filtered, onNavigate: path => changes.push(path) }) };
   const { app, host } = mount(Wrapper);
   try {
-    for (const [label, section] of [['Labels', 'labels'], ['Activity', 'activity'], ['Deleted issues', 'deleted']]) {
+    for (const [label, section] of [['Members and permissions', 'members'], ['Labels', 'labels'], ['Activity', 'activity'], ['Deleted issues', 'deleted']]) {
       button(host, label).props.onClick();
       const next = new URL(changes.at(-1), 'https://local.test');
-      assert.equal(next.pathname, `${boardPath(workspace, p1)}/${section}`);
+      assert.equal(next.pathname, section === 'members' ? '/app/manage' : `${boardPath(workspace, p1)}/${section}`);
       assert.equal(next.searchParams.get('return'), 'owner-workspaces');
       assert.equal(next.searchParams.get('from'), filtered);
     }
@@ -1212,7 +1213,7 @@ test('archived settings return to the management center only with a valid Owner 
     try {
       button(host, expected === '/app' ? '← Choose project' : '← Back to management').props.onClick();
       assert.deepEqual(changes, [expected]);
-      for (const label of ['Labels', 'Activity', 'Deleted issues']) assert.equal(button(host, label), undefined);
+      for (const label of ['Members and permissions', 'Labels', 'Activity', 'Deleted issues']) assert.equal(button(host, label), undefined);
     } finally { app.unmount(); history.restore(); }
   }
 });
@@ -1254,6 +1255,7 @@ test('shared project settings navigation follows permission changes, preserves b
     currentSession.value = { ...session, allowed_scope: { ...session.allowed_scope, projects: projects.map(project => ({ ...project, role: 'reader' })) } };
     resource.value = projectResource(); await nextTick();
     assert.equal(button(host, 'Management'), undefined);
+    assert.equal(button(host, 'Members and permissions'), undefined);
     assert.equal(button(host, 'Deleted issues'), undefined);
     assert.ok(button(host, 'Labels')); assert.ok(button(host, 'Activity'));
     locale.value = 'zh-CN'; await nextTick();
@@ -1267,7 +1269,7 @@ test('archived project management keeps only the management tab and exits to pro
   const { app, host } = mount(SettingsHeader, { session: owner, workspaceId: workspace, projectId: p1, project: projectResource({ deleted_at: '2026-10-01T00:00:00Z', allowed_actions: ['restore'] }), section: 'management', onNavigate: path => navigations.push(path) });
   try {
     assert.ok(button(host, 'Management'));
-    for (const label of ['Labels', 'Activity', 'Deleted issues', '← Back to board']) assert.equal(button(host, label), undefined);
+    for (const label of ['Members and permissions', 'Labels', 'Activity', 'Deleted issues', '← Back to board']) assert.equal(button(host, label), undefined);
     button(host, '← Choose project').props.onClick();
     assert.deepEqual(navigations, ['/app']);
   } finally { app.unmount(); }
@@ -1324,6 +1326,93 @@ test('project management keeps its shared tabs without granting management contr
     assert.equal(all(host).some(item => item.tag === 'form'), false);
     assert.deepEqual(calls, [`/api/v1/workspaces/${workspace}/projects/${p1}`]);
   } finally { app.unmount(); }
+});
+
+for (const section of ['management', 'members']) {
+  test(`project ${section} shows only its own controls and loads only the current tab's data`, async () => {
+    const history = installProjectHistory(ownerProjectSettingsPath(workspace, p1, section));
+    const calls = [];
+    globalThis.fetch = async path => {
+      const pathname = new URL(path, 'https://local.test').pathname;
+      calls.push(pathname);
+      return Response.json(pathname === `/api/v1/workspaces/${workspace}/projects/${p1}`
+        ? projectResource({ context: 'Project notes', allowed_actions: ['read', 'update', 'delete', 'manage_status_names', 'manage_administrators', 'manage_members'] })
+        : pathname.endsWith('/statuses') ? page([{ key: 'todo', display_name: 'To do', version: 2 }])
+        : pathname.endsWith('/members') ? page([{ principal_id: principal, display_name: 'Current member', effective_role: 'writer', sources: [{ kind: 'project_grant', id: 'direct', role: 'writer' }] }])
+        : page([]));
+    };
+    const { app, host } = mount(ManagementPage, { session: instanceOwner, workspaceId: workspace, projectId: p1 });
+    try {
+      await until(() => section === 'members' ? text(host).includes('Current member') : text(host).includes('Status names'));
+      assert.equal(button(host, section === 'members' ? 'Members and permissions' : 'Management').props['aria-current'], 'page');
+      if (section === 'management') {
+        assert.match(text(host), /Settings.*Status names.*Project availability/);
+        assert.doesNotMatch(text(host), /Administrators|Effective members|Direct memberships|Project invitations/);
+        assert.deepEqual(calls.sort(), [`/api/v1/workspaces/${workspace}/projects/${p1}`, `/api/v1/workspaces/${workspace}/projects/${p1}/statuses`].sort());
+      } else {
+        assert.match(text(host), /Administrators.*Effective members and permission sources.*Direct memberships.*Project invitations/);
+        assert.doesNotMatch(text(host), /Status names|Project availability/);
+        assert.equal(all(host).some(item => item.tag === 'textarea'), false);
+        for (const endpoint of ['administrators', 'members', 'administrator-candidates', 'member-candidates']) {
+          assert.ok(calls.includes(`/api/v1/workspaces/${workspace}/projects/${p1}/${endpoint}`), endpoint);
+        }
+        assert.ok(calls.includes(`/api/v1/admin/projects/${p1}/grants`));
+        assert.equal(calls.some(path => path.endsWith('/statuses')), false);
+        locale.value = 'zh-CN'; await nextTick();
+        assert.equal(button(host, '成员与权限').props['aria-current'], 'page');
+        assert.match(text(host), /管理员.*有效成员与权限来源.*直接成员授权.*项目邀请/);
+        locale.value = 'en'; await nextTick();
+      }
+      button(host, '← Back to management').props.onClick();
+      assert.deepEqual(history.navigations.at(-1), ['push', ownerWorkspacesPath]);
+    } finally { app.unmount(); history.restore(); }
+  });
+}
+
+test('direct members links do not expose permission controls to ordinary writers', async () => {
+  const history = installProjectHistory(projectSettingsPath(workspace, p1, 'members'));
+  const calls = [];
+  globalThis.fetch = async path => { calls.push(path); return Response.json(projectResource()); };
+  const { app, host } = mount(ManagementPage, { session, workspaceId: workspace, projectId: p1 });
+  try {
+    await until(() => text(host).includes('Management is unavailable in this session.'));
+    assert.equal(button(host, 'Members and permissions'), undefined);
+    assert.doesNotMatch(text(host), /Administrators|Effective members|Project invitations/);
+    assert.deepEqual(calls, [`/api/v1/workspaces/${workspace}/projects/${p1}`]);
+  } finally { app.unmount(); history.restore(); }
+});
+
+test('archived members links fall back to project management without fetching member data', async () => {
+  const history = installProjectHistory(ownerProjectSettingsPath(workspace, p1, 'members', true));
+  const calls = [];
+  globalThis.fetch = async path => { calls.push(path); return Response.json(projectResource({ deleted_at: '2026-10-01T00:00:00Z', allowed_actions: ['read', 'restore'] })); };
+  const { app, host } = mount(ManagementPage, { session: instanceOwner, workspaceId: workspace, projectId: p1 });
+  try {
+    await until(() => !!button(host, 'Restore project'));
+    assert.equal(button(host, 'Management').props['aria-current'], 'page');
+    assert.equal(button(host, 'Members and permissions'), undefined);
+    assert.doesNotMatch(text(host), /Administrators|Effective members|Project invitations/);
+    assert.deepEqual(calls, [`/api/v1/workspaces/${workspace}/projects/${p1}?deleted=only`]);
+  } finally { app.unmount(); history.restore(); }
+});
+
+test('switching from project settings drafts to members preserves the navigation guard and return context', async () => {
+  const filtered = boardPath(workspace, p1, { search: 'saved filters', priorities: [], labels: [] });
+  const start = projectSettingsPath(workspace, p1, 'management', filtered, false, 'owner-workspaces');
+  const history = installProjectHistory(start);
+  globalThis.fetch = async () => Response.json(projectResource({ context: 'Saved notes', allowed_actions: ['read', 'update', 'manage_members'] }));
+  let allow = false; let confirmations = 0;
+  window.confirm = () => { confirmations++; return allow; };
+  const { app, host } = mount(ManagementPage, { session: instanceOwner, workspaceId: workspace, projectId: p1 });
+  try {
+    await until(() => all(host).some(item => item.tag === 'textarea'));
+    all(host).find(item => item.tag === 'textarea').props['onUpdate:modelValue']('Unsaved project notes'); await nextTick();
+    button(host, 'Members and permissions').props.onClick();
+    assert.equal(confirmations, 1); assert.deepEqual(history.navigations, []);
+    allow = true; button(host, 'Members and permissions').props.onClick();
+    assert.equal(confirmations, 2);
+    assert.deepEqual(history.navigations, [['push', projectSettingsPath(workspace, p1, 'members', filtered, false, 'owner-workspaces')]]);
+  } finally { app.unmount(); history.restore(); }
 });
 
 test('workspace management remains separate from project settings tabs', async () => {

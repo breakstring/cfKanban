@@ -33,7 +33,7 @@
 - 关联 Agent Skills：[Agent Skills & Bootstrap SPEC](2026-08-28-agent-skills-bootstrap-spec.md)
 - 关联 API/Schema：[API & D1 Schema SPEC](2026-08-28-api-schema-spec.md)
 - 事实快照：[Web 认证与公开加入能力快照](../research/web-auth-public-enrollment-snapshot-2026-08-29.md)
-- 最近更新：2026-10-09（收敛 Owner 工作区与项目列表操作，统一设置入口并保留返回来源）
+- 最近更新：2026-10-09（统一 Owner 列表与项目设置导航，独立成员与权限标签并保留返回来源）
 
 ## 1. 目的与边界
 
@@ -167,12 +167,12 @@ Web 不提供 Owner transfer、第二管理员、直接 D1 浏览、完整导出
 
 ### 3.7 项目设置入口与标签页
 
-- 看板的项目级操作收敛为一个「项目设置 / Project settings」按钮。进入后使用同一项目页头和标签导航，承载「项目管理 / Management」「标签 / Labels」「项目活动 / Activity」「已删除事项 / Deleted issues」，不在看板上并列重复这些入口。
-- 「项目管理」只按当前 Project 服务端 `allowed_actions` 的实际管理能力显示；不将普通 writer 或 Principal 名称当作管理授权。「标签」与「项目活动」对可读者提供，标签修改仍要求有效 writer；「已删除事项」及逐条恢复仅对有效 writer/Owner 提供。隐藏标签不预加载其数据，每次访问和写入仍经实时服务端权限与 Session scope 核验。
+- 看板的项目级操作收敛为一个「项目设置 / Project settings」按钮。进入后使用同一项目页头和标签导航，承载「项目管理 / Management」「成员与权限 / Members and permissions」「标签 / Labels」「项目活动 / Activity」「已删除事项 / Deleted issues」，不在看板上并列重复这些入口。
+- 「项目管理」承载项目名称与说明、状态显示名和归档/恢复等项目设置；管理员、有效成员与权限来源、直接成员授权及项目邀请归入独立的「成员与权限」标签。两者只按当前 Project 服务端 `allowed_actions` 的实际管理能力显示，标签和其中操作各自沿用原有权限；不将普通 writer 或 Principal 名称当作管理授权，不因拆分标签扩大管理能力、人员可见范围或 Session scope。「标签」与「项目活动」对可读者提供，标签修改仍要求有效 writer；「已删除事项」及逐条恢复仅对有效 writer/Owner 提供。隐藏标签不预加载其数据，每次访问和写入仍经实时服务端权限与 Session scope 核验。
 - 看板入口对有实际项目管理能力者默认选择「项目管理」，其余可读者默认选择「项目活动」。所有标签切换和返回看板均保留同一项目及已提交筛选条件，`from` 只接收准确同项目看板路径，不接受任意外部跳转。
 - Owner「工作区与项目」的项目设置入口直接进入「项目管理」。项目各设置标签和仅工作区管理页保留有限来源标记 `return=owner-workspaces`；仅单一、精确的该标记在完整 Owner 实例管理 Session 中生效，返回按钮为「返回管理中心 / Back to management」，目标由当前准确工作区 UUID 构造为 `/app/admin?section=workspaces&workspace={workspace_id}`，回到列表并展开来源工作区。有效 Owner 来源优先于同项目看板 `from`；非法或重复标记不生效，继续沿用原有出口。不接受任意返回 URL，不提升 Owner 固定 Project/Issue Session 或局部管理员范围。
-- 保留已有地址：项目管理为 `/app/manage?workspace={workspace_id}&project={project_id}`；其余分别为 `/app/w/{workspace_id}/p/{project_id}/labels`、`/activity`、`/deleted`。这些地址直接进入对应标签，不新增替代业务 API 或破坏旧链接。仅工作区的管理地址保留原页面，不引入项目标签；Owner 工作区设置入口使用 `section=settings` 直接打开工作区设置标签，同时保留上述固定返回来源。
-- 各标签复用原有业务能力、错误恢复和分页；聚合导航不扩大权限、不合并原子写入、不把项目活动变为 Owner 安全审计。已归档项目只显示仍有权访问的「项目管理」标签；没有有效 Owner 列表来源时，页头出口为「选择项目 / Choose project」并进入 `/app`，不导航至不可读的归档看板。
+- 保留已有地址：`/app/manage?workspace={workspace_id}&project={project_id}` 继续默认进入项目管理，增加 `section=members` 进入成员与权限；其余分别为 `/app/w/{workspace_id}/p/{project_id}/labels`、`/activity`、`/deleted`。成员标签继续携带原有已校验的 `from`、`return` 与 `archived` 语义。这些地址直接进入对应标签，不新增替代业务 API 或破坏旧链接。仅工作区的管理地址保留原页面，不引入项目标签；Owner 工作区设置入口使用 `section=settings` 直接打开工作区设置标签，同时保留上述固定返回来源。
+- 各标签复用原有业务能力、错误恢复和分页；聚合导航不扩大权限、不合并原子写入、不把项目活动变为 Owner 安全审计。已归档项目只显示仍有权访问的「项目管理」标签，不显示或预加载成员与权限；直接访问归档项目的 `section=members` 也回到项目管理内容。没有有效 Owner 列表来源时，页头出口为「选择项目 / Choose project」并进入 `/app`，不导航至不可读的归档看板。
 
 ## 4. Browser Launch 与 Web Session
 

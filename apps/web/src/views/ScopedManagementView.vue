@@ -44,8 +44,9 @@ const draft = ref({ display_name: "", context: "" });
 const projectName = ref("");
 let projectNameBaseline = "";
 const requestedSections = new URLSearchParams(window.location.search).getAll("section");
-const section = ref<"projects" | "members" | "settings">(!props.projectId && requestedSections.length === 1
-  && (requestedSections[0] === "settings" || requestedSections[0] === "members") ? requestedSections[0] : "projects");
+const section = ref<"projects" | "members" | "settings">(requestedSections.length === 1
+  && (requestedSections[0] === "members" || (!props.projectId && requestedSections[0] === "settings"))
+  ? requestedSections[0] : props.projectId ? "settings" : "projects");
 const returnPath = new URLSearchParams(window.location.search).get("from");
 const returnProject = computed(() => projectReturnTarget(returnPath, props.session.allowed_scope.projects ?? []));
 const ownerReturnPath = computed(() => ownerWorkspacesReturnPath(props.session, props.workspaceId, window.location.search));
@@ -197,11 +198,15 @@ async function load(resetDraft = false): Promise<void> {
     if (!hasManagementActions(result)) return;
     if (resetDraft) draft.value = { display_name: result.display_name, context: result.context ?? "" };
     emit("context", { label: result.display_name, role: ui("Scoped management", "范围管理") });
-    if (result.deleted_at !== null) return;
-    const reads: Promise<unknown>[] = [readPage("administrators")];
-    if (props.projectId && can("manage_members")) reads.push(readPage("members"), readPage("grants"));
+    if (result.deleted_at !== null) {
+      if (props.projectId) section.value = "settings";
+      return;
+    }
+    const reads: Promise<unknown>[] = [];
+    if (!props.projectId || section.value === "members") reads.push(readPage("administrators"));
+    if (props.projectId && section.value === "members" && can("manage_members")) reads.push(readPage("members"), readPage("grants"));
     if (!props.projectId && can("create_project")) reads.push(readPage("projects"));
-    if (props.projectId && can("manage_status_names")) reads.push((async () => {
+    if (props.projectId && section.value !== "members" && can("manage_status_names")) reads.push((async () => {
       const result = await apiRequest<ListResult<ProjectStatusResource>>(`${resourcePath}/statuses`);
       if (!mounted || currentGeneration !== generation) return;
       statuses.value = result.items;
@@ -343,7 +348,7 @@ async function returnToProject(): Promise<void> {
 
 <template>
   <main class="page-shell scoped-management">
-    <ProjectSettingsHeader v-if="projectId" :workspace-id="workspaceId" :project-id="projectId" section="management" :project="resource" :session="session" @navigate="navigate">
+    <ProjectSettingsHeader v-if="projectId" :workspace-id="workspaceId" :project-id="projectId" :section="section === 'members' ? 'members' : 'management'" :project="resource" :session="session" @navigate="navigate">
       <template #actions><UButton color="neutral" variant="ghost" type="button" :disabled="busy || loading" @click="refresh">{{ t('action.refresh') }}</UButton></template>
     </ProjectSettingsHeader>
     <header v-else class="page-title-block">
@@ -364,13 +369,13 @@ async function returnToProject(): Promise<void> {
       <nav v-if="!projectId" class="management-tabs" :aria-label="ui('Workspace management sections', '工作区管理分区')">
         <UButton color="neutral" variant="ghost" v-for="key in (['projects', 'members', 'settings'] as const)" :key="key" type="button" class="text-button" :aria-current="section === key ? 'page' : undefined" @click="section = key">{{ key === 'projects' ? ui('Projects', '项目') : key === 'members' ? ui('Members and permissions', '成员与权限') : ui('Workspace settings', '工作区设置') }}</UButton>
       </nav>
-      <form v-if="active && can('update')" v-show="projectId || section === 'settings'" class="form-stack management-section" @submit.prevent="saveSettings">
+      <form v-if="active && can('update') && (!projectId || section !== 'members')" v-show="projectId || section === 'settings'" class="form-stack management-section" @submit.prevent="saveSettings">
         <h2>{{ ui('Settings', '设置') }}</h2>
         <label>{{ ui('Name', '名称') }}<UInput class="w-full" v-model="draft.display_name" required maxlength="128" /></label>
         <label v-if="projectId">{{ ui('Project context', '项目说明') }}<UTextarea class="w-full" v-model="draft.context" :rows="4" /></label>
         <div class="form-actions"><UButton color="primary" variant="solid" class="primary-button" :disabled="busy" type="submit">{{ t('action.save') }}</UButton></div>
       </form>
-      <section v-if="statuses.length && can('manage_status_names')" class="management-section">
+      <section v-if="statuses.length && can('manage_status_names') && section !== 'members'" class="management-section">
         <h2>{{ ui('Status names', '状态显示名') }}</h2>
         <form v-for="status in statuses" :key="status.key" class="management-row" @submit.prevent="write(`${resourcePath}/statuses/${status.key}`, 'PATCH', { display_name: statusDrafts[status.key], expected_version: status.version })">
           <label>{{ status.key }}<UInput class="w-full" :model-value="statusDrafts[status.key] ?? ''" @update:model-value="statusDrafts[status.key] = String($event)" required maxlength="128" /></label>
@@ -392,7 +397,7 @@ async function returnToProject(): Promise<void> {
         </div>
         <UButton color="neutral" variant="outline" v-if="cursors.projects" class="secondary-button" type="button" :disabled="busy" @click="more('projects')">{{ ui('Load more', '加载更多') }}</UButton>
       </section>
-      <section v-if="active" v-show="projectId || section === 'members'" class="management-section">
+      <section v-if="active && (!projectId || section === 'members')" v-show="section === 'members'" class="management-section">
         <h2>{{ ui('Administrators', '管理员') }}</h2>
         <p>{{ projectId ? ui('Workspace administrators also inherit management access. Project administrators cannot appoint or remove peers.', '工作区管理员也继承本项目管理权；项目管理员不能任免同级管理员。') : ui('Only the Owner can appoint or remove workspace administrators. All current and future projects inherit this access.', '只有实例所有者可以任免工作区管理员；授权覆盖现在和未来的全部子项目。') }}</p>
         <form v-if="can('manage_administrators')" class="management-person-form" @submit.prevent="grantAdministrator()">
@@ -410,7 +415,7 @@ async function returnToProject(): Promise<void> {
         </div>
         <UButton color="neutral" variant="outline" v-if="cursors.administrators" class="secondary-button" type="button" :disabled="busy" @click="more('administrators')">{{ ui('Load more', '加载更多') }}</UButton>
       </section>
-      <section v-if="projectId && active && can('manage_members')" class="management-section">
+      <section v-if="projectId && active && can('manage_members') && section === 'members'" class="management-section">
         <h2>{{ ui('Effective members and permission sources', '有效成员与权限来源') }}</h2>
         <p>{{ ui('Independent sources are combined. Removing one source preserves all others; inherited administration cannot be reduced by a reader grant.', '各项独立权限合并生效；移除一项仍保留其他来源，reader 授权不能降低继承管理权。') }}</p>
         <div v-for="member in members" :key="member.principal_id" class="management-row">
@@ -436,7 +441,7 @@ async function returnToProject(): Promise<void> {
         <UButton color="neutral" variant="outline" v-if="cursors.grants" class="secondary-button" type="button" :disabled="busy" @click="more('grants')">{{ ui('Load more grants', '加载更多授权') }}</UButton>
         <ScopedInvitations :project-id="projectId" :session="session" />
       </section>
-      <section v-if="projectId && (can('delete') || can('restore'))" class="management-section">
+      <section v-if="projectId && section !== 'members' && (can('delete') || can('restore'))" class="management-section">
         <h2>{{ ui('Project availability', '项目可用性') }}</h2>
         <UButton color="neutral" variant="ghost" v-if="can('delete')" class="text-button" type="button" :disabled="busy" @click="confirmArchive(resource, false)">{{ ui('Archive project', '归档项目') }}</UButton>
         <UButton color="neutral" variant="outline" v-if="can('restore')" class="secondary-button" type="button" :disabled="busy" @click="confirmArchive(resource, true)">{{ ui('Restore project', '恢复项目') }}</UButton>

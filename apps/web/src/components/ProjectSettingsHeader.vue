@@ -28,6 +28,7 @@ const ui = (en: string, zh: string) => locale.value === "zh-CN" ? zh : en;
 function label(section: ProjectSettingsSection): string {
   return {
     management: ui("Management", "项目管理"),
+    members: ui("Members and permissions", "成员与权限"),
     labels: ui("Labels", "标签"),
     activity: ui("Activity", "项目活动"),
     deleted: ui("Deleted issues", "已删除事项"),

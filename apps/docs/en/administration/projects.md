@@ -15,6 +15,8 @@ Only the Owner can create a workspace. The Owner or a workspace administrator ca
 
 Expand a Workspace to browse its Projects. Choose a Project name to open its board, **Workspace settings** to open the Workspace management page's settings tab, or **Project settings** to open the full Project settings page. Workspace management also provides **Projects** and **Members and permissions** tabs. Project notes appear beneath the name. The row's more-actions menu holds less frequent actions: renaming or archiving a Workspace, and Public Join or archiving a Project. When settings were opened from this list, **Back to management** returns to the list with that Workspace expanded.
 
+Project settings separates **Management** from **Members and permissions**. Management contains Project notes, names, column labels, and archive or restore actions. Members and permissions contains administrators, effective members and their permission sources, direct memberships, and Project invitations. Tabs and actions remain limited by your current access.
+
 ## Change names and Project notes
 
 ```text

@@ -3,7 +3,7 @@ import { hasManagementActions, managementPath } from "./scoped-management";
 import { canAccessOwnerControlPlane } from "./session-capabilities";
 import type { ContainerResource, WebSessionView } from "../types";
 
-export type ProjectSettingsSection = "management" | "labels" | "activity" | "deleted";
+export type ProjectSettingsSection = "management" | "members" | "labels" | "activity" | "deleted";
 export const ownerWorkspacesReturnTarget = "owner-workspaces";
 export type ProjectSettingsReturnTarget = typeof ownerWorkspacesReturnTarget;
 
@@ -37,7 +37,8 @@ export function projectSettingsPath(
   const from = boardReturnPath(workspaceId, projectId, new URLSearchParams({ from: returnTo }).toString());
   const query = new URLSearchParams({ from });
   if (returnTarget === ownerWorkspacesReturnTarget) query.set("return", returnTarget);
-  if (section === "management") {
+  if (section === "management" || section === "members") {
+    if (section === "members") query.set("section", "members");
     if (archived) query.set("archived", "1");
     return `${managementPath(workspaceId, projectId)}&${query}`;
   }
@@ -66,6 +67,7 @@ export function projectSettingsSections(
     grant.principal_id === session.principal.id && grant.revoked_at === null
     && grant.workspace_id === workspaceId && (grant.project_id === null || grant.project_id === projectId));
   const sections: ProjectSettingsSection[] = hasManagementActions(project) && (role !== null || archivedManagement) ? ["management"] : [];
+  if (sections.length && project.deleted_at === null) sections.push("members");
   if (role && project.deleted_at === null) sections.push("labels", "activity");
   if ((role === "owner" || role === "writer") && project.deleted_at === null) sections.push("deleted");
   return sections;

@@ -22,7 +22,7 @@ Viewing tasks requires read access to the target project. It does not claim task
 
 The account menu brings together your name, role, **Work list**, **Management center** when authorized, **Personal settings**, and **Sign out**. Language selection remains outside it. If you use a different access address, the footer shows the site's recommended address.
 
-The board's **Project settings** provides project management, labels, project activity, and deleted tasks. Available tabs depend on your permissions.
+The board's **Project settings** provides **Management**, **Members and permissions**, **Labels**, **Activity**, and **Deleted issues**. Available tabs depend on your permissions.
 
 ## Daily work boundaries
 

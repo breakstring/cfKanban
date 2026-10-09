@@ -32,7 +32,7 @@ Workspace administrators inherit management and read/write access to all current
 Open the management page available to me in <requested browser>.
 ```
 
-**In the full online app:** The Owner can open the account menu at the top right → **Management center**. The full management entry is `/app/admin`, with **Overview**, **Workspaces & Projects**, **Members & access**, **Activity**, and **Archived**. Scoped administrators open **Project settings → Management** from an authorized Project and see only their settings, members, and Projects. The Agent can also open management for an empty authorized Workspace.
+**In the full online app:** The Owner can open the account menu at the top right → **Management center**. The full management entry is `/app/admin`, with **Overview**, **Workspaces & Projects**, **Members & access**, **Activity**, and **Archived**. Scoped administrators open **Project settings** from an authorized Project: **Management** contains Project settings, while **Members and permissions** contains administrators, memberships, and invitations within their scope. The Agent can also open management for an empty authorized Workspace.
 
 Browser Session scope also limits access. An Owner Session opened for a single Project does not automatically gain instance administration. Ask the Agent to open the full administration target. If an action is missing, check the current identity, scope, and deployed version first.
 
