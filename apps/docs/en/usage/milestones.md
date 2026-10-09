@@ -14,7 +14,7 @@ Create an “Attachment delivery” milestone in this Project, due 2026-11-30, w
 
 ## Set Issue membership
 
-Choose a milestone when creating an Issue or in its detail view, or leave **No milestone** selected. An Issue belongs to at most one milestone in its own Project at a time. You can remove it or move it to another milestone; changes remain in history. Parents and children choose independently without inheritance.
+Choose a milestone when creating an Issue, or leave **No milestone** selected. For an existing Issue, use **Milestone** in the detail properties on the right to join, change or leave a goal. Each selection saves immediately without opening **Edit issue**. An Issue belongs to at most one milestone in its own Project at a time. Changes remain in history, and parents and children choose independently without inheritance.
 
 ```text
 Add CFK-123 to this Project’s “Attachment delivery” milestone. Verify the exact target and current Issue version first.

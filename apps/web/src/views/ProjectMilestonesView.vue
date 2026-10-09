@@ -158,16 +158,36 @@ onUnmounted(() => { generation += 1; projectRequest += 1; page.reset(); });
 </script>
 
 <template>
-  <main class="page-shell milestones-page">
-    <header class="milestones-header"><div><p class="eyebrow">{{ project?.workspace_display_name }}</p><h1>{{ project?.display_name ?? scope?.project_display_name }} · {{ ui('Milestones', '里程碑') }}</h1></div><UButton v-if="canWrite" color="primary" type="button" :disabled="busy || !!pending || !!conflict" @click="openEditor()">{{ ui('New milestone', '新建里程碑') }}</UButton></header>
-    <div class="milestones-toolbar"><div class="milestone-views" role="group" :aria-label="ui('Project view', '项目视图')"><UButton color="neutral" variant="ghost" type="button" @click="navigate(boardPath(workspaceId, projectId, boardOnly))">{{ ui('Board', '看板') }}</UButton><UButton color="neutral" variant="ghost" type="button" @click="navigate(boardPath(workspaceId, projectId, { ...boardView, view: 'list' }))">{{ ui('List', '列表') }}</UButton><span aria-current="page">{{ ui('Milestones', '里程碑') }}</span></div><USelect v-model="status" :disabled="busy || !!pending" :items="[{ value: 'all', label: ui('All milestones', '全部里程碑') }, { value: 'open', label: ui('Open', '开放') }, { value: 'closed', label: ui('Closed', '已关闭') }]" :aria-label="ui('Milestone status', '里程碑状态')" /><UButton color="neutral" variant="ghost" type="button" :disabled="page.loading || busy" @click="load()">{{ ui('Refresh', '刷新') }}</UButton></div>
+  <main class="board-page board-page--nuxt milestones-page">
+    <header class="board-toolbar">
+      <div class="board-title"><div class="board-heading-row"><p class="eyebrow">{{ project?.workspace_display_name }}</p><h1>{{ project?.display_name ?? scope?.project_display_name }}</h1></div></div>
+      <div class="board-toolbar-actions"><UButton v-if="canWrite" color="primary" type="button" :disabled="busy || !!pending || !!conflict" @click="openEditor()"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>{{ ui('New milestone', '新建里程碑') }}</UButton></div>
+      <div class="board-utility-bar">
+        <div class="board-view-bar" role="group" :aria-label="ui('Project view', '项目视图')">
+          <button class="board-view-label board-view-inactive" type="button" :aria-pressed="false" @click="navigate(boardPath(workspaceId, projectId, boardOnly))"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ ui('Board', '看板') }}</button>
+          <button class="board-view-label board-view-inactive" type="button" :aria-pressed="false" @click="navigate(boardPath(workspaceId, projectId, { ...boardView, view: 'list' }))"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4h10M7 10h10M7 16h10M3 4h.01M3 10h.01M3 16h.01" /></svg>{{ ui('List', '列表') }}</button>
+          <button class="board-view-label" type="button" :aria-pressed="true" aria-current="page">{{ ui('Milestones', '里程碑') }}</button>
+        </div>
+        <div class="board-filter-controls" role="group" :aria-label="ui('Milestone filters', '里程碑筛选')">
+          <USelect v-model="status" :disabled="busy || !!pending" :items="[{ value: 'all', label: ui('All milestones', '全部里程碑') }, { value: 'open', label: ui('Open', '开放') }, { value: 'closed', label: ui('Closed', '已关闭') }]" :aria-label="ui('Milestone status', '里程碑状态')" />
+          <UButton color="neutral" variant="ghost" type="button" :disabled="page.loading || busy" @click="load()">{{ ui('Refresh', '刷新') }}</UButton>
+        </div>
+      </div>
+    </header>
     <p class="muted-copy">{{ ui('Milestones are optional delivery goals for this project. Issues may remain unassigned; parent and child Issues have independent assignments.', '里程碑是本项目可选的交付目标。事项可以不归属里程碑；父子事项各自设置归属。') }}</p>
     <ErrorNotice v-if="error" :error="error" />
     <ErrorNotice v-if="page.error" :error="errorText(page.error)" />
     <p v-if="pending && !showEditor" class="warning-panel" role="status">{{ ui('Save is unconfirmed. Verify the original operation before continuing.', '保存结果尚未确认，请核实原操作后继续。') }} <UButton color="neutral" variant="ghost" :disabled="busy || !canWrite" @click="write(pending!)">{{ ui('Verify save', '核实保存') }}</UButton></p>
     <CasConflictNotice v-if="conflict && !showEditor" :conflict="conflict" :busy="busy" @refresh="refreshConflict" @dismiss="dismissConflict" />
     <div class="milestone-list">
-      <article v-for="item in page.items" :key="item.id" class="milestone-row"><div class="milestone-heading"><h2>{{ item.title }}</h2><span>{{ item.status_key === 'closed' ? ui('Closed', '已关闭') : ui('Open', '开放') }}</span><span>{{ ui('Target date', '目标日期') }}: {{ item.due_date ?? ui('Not set', '未设置') }}</span></div><MarkdownContent v-if="item.description" :source="item.description" /><dl class="milestone-progress"><div><dt>{{ ui('Total', '总数') }}</dt><dd>{{ item.progress.total }}</dd></div><div><dt>{{ ui('Done', '已完成') }}</dt><dd>{{ item.progress.done }}</dd></div><div><dt>{{ ui('Unfinished', '未完成') }}</dt><dd>{{ item.progress.unfinished }}</dd></div><div><dt>{{ ui('Canceled', '已取消') }}</dt><dd>{{ item.progress.canceled }}</dd></div></dl><div class="form-actions"><UButton color="neutral" variant="outline" type="button" @click="viewIssues(item)">{{ ui('View Issues', '查看事项') }}</UButton><UButton v-if="canWrite && item.allowed_actions.includes('update')" color="neutral" variant="ghost" type="button" :disabled="busy || !!pending || !!conflict" @click="openEditor(item)">{{ ui('Edit', '编辑') }}</UButton><UButton v-if="canWrite && item.allowed_actions.includes('update')" color="neutral" variant="ghost" type="button" :disabled="busy || !!pending || !!conflict" @click="changeStatus(item)">{{ item.status_key === 'open' ? ui('Close milestone', '关闭里程碑') : ui('Reopen milestone', '重新开放') }}</UButton></div></article>
+      <article v-for="item in page.items" :key="item.id" class="milestone-row">
+        <div class="milestone-content">
+          <div class="milestone-heading"><h2>{{ item.title }}</h2><span>{{ item.status_key === 'closed' ? ui('Closed', '已关闭') : ui('Open', '开放') }}</span><span>{{ ui('Target date', '目标日期') }}: {{ item.due_date ?? ui('Not set', '未设置') }}</span></div>
+          <MarkdownContent v-if="item.description" class="milestone-description" :source="item.description" />
+          <dl class="milestone-progress"><div><dt>{{ ui('Total', '总数') }}</dt><dd>{{ item.progress.total }}</dd></div><div><dt>{{ ui('Done', '已完成') }}</dt><dd>{{ item.progress.done }}</dd></div><div><dt>{{ ui('Unfinished', '未完成') }}</dt><dd>{{ item.progress.unfinished }}</dd></div><div><dt>{{ ui('Canceled', '已取消') }}</dt><dd>{{ item.progress.canceled }}</dd></div></dl>
+        </div>
+        <div class="milestone-actions"><UButton color="neutral" variant="outline" type="button" @click="viewIssues(item)">{{ ui('View Issues', '查看事项') }}</UButton><UButton v-if="canWrite && item.allowed_actions.includes('update')" color="neutral" variant="ghost" type="button" :disabled="busy || !!pending || !!conflict" @click="openEditor(item)">{{ ui('Edit', '编辑') }}</UButton><UButton v-if="canWrite && item.allowed_actions.includes('update')" color="neutral" variant="ghost" type="button" :disabled="busy || !!pending || !!conflict" @click="changeStatus(item)">{{ item.status_key === 'open' ? ui('Close milestone', '关闭里程碑') : ui('Reopen milestone', '重新开放') }}</UButton></div>
+      </article>
     </div>
     <p v-if="page.loading" role="status">{{ ui('Loading milestones…', '正在加载里程碑…') }}</p><p v-else-if="page.loaded && !page.items.length && !page.error" class="empty-copy">{{ ui('No matching milestones. Issues can be used without milestones.', '暂无匹配的里程碑，事项可以独立使用。') }}</p><UButton v-if="page.cursor || page.error" color="neutral" variant="outline" type="button" :disabled="page.loading" @click="load(!page.cursor)">{{ page.error ? ui('Retry', '重试') : ui('Load more', '加载更多') }}</UButton>
     <ModalDialog v-if="showEditor" :title="editing ? ui('Edit milestone', '编辑里程碑') : ui('New milestone', '新建里程碑')" :busy="busy || !!pending" @close="closeEditor">
@@ -179,19 +199,40 @@ onUnmounted(() => { generation += 1; projectRequest += 1; page.reset(); });
 </template>
 
 <style scoped>
-.milestones-page { max-width: 1100px; }
-.milestones-header, .milestones-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
-.milestones-header h1 { margin: 0; font-size: 24px; }
-.milestones-toolbar { justify-content: flex-start; padding-block: 12px; margin-top: 12px; border-top: 1px solid var(--color-border); }
-.milestone-views { display: flex; align-items: center; gap: 12px; }
-.milestone-views > span { color: var(--color-primary); font-weight: 600; }
+.board-page--nuxt { padding: 16px 28px 18px; }
+.board-toolbar { gap: 12px 16px; margin-bottom: 12px; }
+.board-title { min-width: 0; }
+.board-heading-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.board-title h1 { font-family: var(--font-ui); font-size: 24px; font-weight: 650; line-height: 1.35; letter-spacing: -.02em; }
+.board-title .eyebrow { margin: 0; font-size: 12px; color: var(--color-text-muted); }
+.ui-action-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.board-view-bar { display: flex; flex: none; align-items: center; gap: 16px; }
+.board-view-label { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 0; border: 0; border-bottom: 2px solid var(--color-primary); background: transparent; color: var(--color-primary); font-size: 14px; font-weight: 600; cursor: pointer; }
+.board-view-inactive { border-bottom-color: transparent; color: var(--color-text-muted); font-weight: 400; }
+.board-utility-bar { justify-content: flex-start; flex-wrap: wrap; gap: 8px 16px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+.board-filter-controls { display: flex; flex: 1 1 200px; min-width: 0; margin-left: auto; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 16px; }
 .milestone-list { display: grid; gap: 0; }
-.milestone-row { padding-block: 20px; border-bottom: 1px solid var(--color-border); }
+.milestone-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 16px; padding-block: 16px; border-bottom: 1px solid var(--color-border); }
+.milestone-content { min-width: 0; }
 .milestone-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
-.milestone-heading h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+.milestone-heading h2 { margin: 0; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
 .milestone-heading span { font-size: 13px; color: var(--color-text-muted); }
-.milestone-progress { display: flex; flex-wrap: wrap; gap: 16px; margin-block: 12px; }
+.milestone-description { max-width: 72ch; }
+.milestone-progress { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 8px 0 0; }
 .milestone-progress > div { display: flex; gap: 8px; font-size: 13px; }
 .milestone-progress dt { color: var(--color-text-muted); }
-.milestone-progress dd { margin: 0; font-weight: 600; }
+.milestone-progress dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.milestone-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 940px) {
+  .board-page--nuxt { padding: 12px 16px; }
+  .board-toolbar-actions :deep(button), .board-view-label, .board-filter-controls :deep(button), .milestone-actions :deep(button) { min-height: 44px; }
+  .milestone-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .milestone-actions { justify-content: flex-start; }
+}
+@media (max-width: 640px) {
+  .board-toolbar { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .board-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .board-title h1 { font-size: 22px; }
+  .board-filter-controls { flex-basis: 100%; margin-left: 0; justify-content: flex-start; }
+}
 </style>

@@ -816,11 +816,13 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
             <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'list' }" :aria-pressed="viewMode === 'list'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('list')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4h10M7 10h10M7 16h10M3 4h.01M3 10h.01M3 16h.01" /></svg>{{ locale === 'zh-CN' ? '列表' : 'List' }}</button>
             <button type="button" class="board-view-label board-view-inactive" :disabled="saving.size > 0 || hasPendingWrites" @click="openMilestones">{{ locale === 'zh-CN' ? '里程碑' : 'Milestones' }}</button>
           </div>
-          <USelect :model-value="selectedStatus ?? 'all'" :items="statusFilterItems" :aria-label="t('issue.status')" :disabled="loading || saving.size > 0 || hasPendingWrites" @update:model-value="changeStatusFilter" />
         </div>
-        <ProjectSearch v-model="search" :issues="searchIssues" :project-id="projectId" :applied-search="appliedSearch" :disabled="loading || saving.size > 0 || hasPendingWrites" :reset-key="`${workspaceId}:${projectId}:${session.principal.id}:${session.session_id}`" @search="submitProjectSearch" @open="openListIssue" />
-        <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || hasPendingWrites" />
-        <MilestoneSelect v-if="project" v-model:value="selectedMilestone" :workspace-id="workspaceId" :project-id="projectId" :reset-key="`${session.session_id}:${role}`" allow-any :disabled="loading || saving.size > 0 || hasPendingWrites" />
+        <div class="board-filter-controls" role="group" :aria-label="locale === 'zh-CN' ? '事项筛选' : 'Issue filters'">
+          <ProjectSearch v-model="search" :issues="searchIssues" :project-id="projectId" :applied-search="appliedSearch" :disabled="loading || saving.size > 0 || hasPendingWrites" :reset-key="`${workspaceId}:${projectId}:${session.principal.id}:${session.session_id}`" @search="submitProjectSearch" @open="openListIssue" />
+          <USelect :model-value="selectedStatus ?? 'all'" :items="statusFilterItems" :aria-label="t('issue.status')" :disabled="loading || saving.size > 0 || hasPendingWrites" @update:model-value="changeStatusFilter" />
+          <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || hasPendingWrites" />
+          <MilestoneSelect v-if="project" v-model:value="selectedMilestone" :workspace-id="workspaceId" :project-id="projectId" :reset-key="`${session.session_id}:${role}`" allow-any :disabled="loading || saving.size > 0 || hasPendingWrites" />
+        </div>
       </div>
     </header>
     <p v-if="filtersPending" class="muted-copy" role="status">{{ locale === 'zh-CN' ? '正在更新筛选结果…' : 'Updating filtered results…' }}</p>
@@ -978,6 +980,9 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 .board-description :deep(.markdown > :last-child) { margin-bottom: 0; }
 .ui-action-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .board-view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.board-filter-controls { display: flex; flex: 1 1 700px; min-width: 0; margin-left: auto; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 16px; }
+.board-filter-controls :deep(.issue-query-filters--compact) { margin-left: 0; }
+.board-filter-controls :deep(.milestone-options) { left: auto; right: 0; }
 .board-view-bar { display: flex; flex: none; align-items: center; gap: 16px; }
 .board-view-label { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 0; border: 0; border-bottom: 2px solid var(--color-primary); background: transparent; color: var(--color-primary); font-size: 14px; font-weight: 600; cursor: pointer; }
 .board-view-inactive { border-bottom-color: transparent; color: var(--color-text-muted); font-weight: 400; }
@@ -1014,6 +1019,8 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
   .board-toolbar { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .board-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; }
   .board-title h1 { font-size: 22px; }
+  .board-filter-controls { flex-basis: 100%; margin-left: 0; justify-content: flex-start; }
+  .board-filter-controls :deep(.milestone-options) { left: 0; right: auto; }
   .kanban-board { grid-template-columns: repeat(5, minmax(260px, 1fr)); min-width: 1364px; }
   .card-status-select { min-height: 44px; }
 }

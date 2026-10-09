@@ -84,12 +84,14 @@ const loading = ref(true);
 const busy = ref(false);
 const pendingPriority = ref<{ expected_version: number; priority_key: PriorityKey } | null>(null);
 const pendingMilestoneEdit = ref<Record<string, unknown> | null>(null);
+const pendingMilestoneClosesEditor = ref(false);
 const priorityReadbackFailed = ref(false);
 const writeBusy = computed(() => busy.value || pendingPriority.value !== null || pendingMilestoneEdit.value !== null);
 const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocalizedError();
 const casConflict = ref<CasConflictState | null>(null);
 const editMode = ref(false);
 const edit = ref({ body: "", priority_key: "none" as PriorityKey, title: "", milestone: "none" });
+const hasIndependentMilestoneDraft = ref(false);
 const comment = ref("");
 const completionSummary = ref("");
 const showComplete = ref(false);
@@ -133,6 +135,7 @@ useSessionTextDraft({
     const local = editMode.value && issue.value ? changedTextFields({ title: [edit.value.title, issue.value.title], body: [edit.value.body, issue.value.body ?? ""] }) : null;
     issue.value = latest; editMode.value = true;
     edit.value = { body: latest.body ?? "", title: latest.title, priority_key: latest.priority, milestone: milestoneSelection(latest.milestone), ...local, ...fields };
+    hasIndependentMilestoneDraft.value = false;
   },
   uncertain: () => writeFence.active || hasUncertainWrite(`/api/v1/issues/${props.identifier}`),
 });
@@ -211,6 +214,8 @@ function projectionIsCurrent(generation: number): boolean {
 function clearIssueProjection(): void {
   pendingPriority.value = null;
   pendingMilestoneEdit.value = null;
+  pendingMilestoneClosesEditor.value = false;
+  hasIndependentMilestoneDraft.value = false;
   priorityReadbackFailed.value = false;
   issue.value = null;
   statuses.value = [];
@@ -314,6 +319,7 @@ async function load(preserveLocalDrafts = editMode.value, throwOnFailure = false
     issue.value = result;
     if (!preserveLocalDrafts) {
       edit.value = { body: result.body ?? "", priority_key: result.priority, title: result.title, milestone: milestoneSelection(result.milestone) };
+      hasIndependentMilestoneDraft.value = false;
     }
     emit("context", { label: `${result.workspace.display_name} / ${result.project.display_name}`, role: roleForProject(result), workspaceId: result.workspace.id, projectId: result.project.id });
     statuses.value = statusResult.items;
@@ -466,6 +472,26 @@ async function refreshCurrentFacts(): Promise<void> {
   emit("context", { label: `${result.workspace.display_name} / ${result.project.display_name}`, role: roleForProject(result), workspaceId: result.workspace.id, projectId: result.project.id });
 }
 
+function isMilestoneAssignmentWriteResult(value: unknown, current: IssueDetail, payload: Record<string, unknown>): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const resource = (value as WriteResult<IssueDetail>).resource;
+  if (typeof resource !== "object" || resource === null || Array.isArray(resource)
+    || resource.id !== current.id || resource.identifier !== current.identifier
+    || resource.project?.id !== current.project.id || resource.workspace?.id !== current.workspace.id
+    || !Number.isSafeInteger(resource.version) || resource.version <= Number(payload.expected_version)
+    || typeof resource.title !== "string" || typeof resource.body !== "string"
+    || !priorityOrder.includes(resource.priority) || !["backlog", "todo", "in_progress", "done", "canceled"].includes(resource.status?.key)
+    || !Array.isArray(resource.allowed_actions) || resource.allowed_actions.some(action => typeof action !== "string")) return false;
+  const milestone = resource.milestone;
+  if (payload.milestone_id === null) return milestone === null;
+  return typeof milestone === "object" && milestone !== null && milestone.id === payload.milestone_id
+    && typeof milestone.title === "string" && milestone.title.trim() === milestone.title && Array.from(milestone.title).length > 0 && Array.from(milestone.title).length <= 200
+    && ["open", "closed"].includes(milestone.status_key)
+    && (milestone.due_date === null || typeof milestone.due_date === "string" && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(milestone.due_date)
+      && !milestone.due_date.startsWith("0000") && Number.isFinite(Date.parse(`${milestone.due_date}T00:00:00Z`))
+      && new Date(`${milestone.due_date}T00:00:00Z`).toISOString().slice(0, 10) === milestone.due_date);
+}
+
 async function updateIssue(payload: Record<string, unknown>, closeEditor = false): Promise<void> {
   const current = issue.value;
   if (current === null || busy.value || !canUpdate.value) return;
@@ -476,6 +502,7 @@ async function updateIssue(payload: Record<string, unknown>, closeEditor = false
   const wasPending = pendingPriority.value !== null;
   const fenceKey = `issue-update:${current.id}`;
   if (!writeFence.enter(fenceKey)) return;
+  if (editMode.value && edit.value.milestone !== milestoneSelection(current.milestone)) hasIndependentMilestoneDraft.value = true;
   const generation = projectionGeneration.capture();
   busy.value = true;
   clearError();
@@ -483,6 +510,8 @@ async function updateIssue(payload: Record<string, unknown>, closeEditor = false
     const result = await apiRequest<WriteResult<IssueDetail>>(`/api/v1/issues/${current.identifier}`, {
       body: requestBody,
       method: "PATCH",
+      authorizationCurrent: () => projectionIsCurrent(generation),
+      ...("milestone_id" in requestBody ? { validateResponse: (value: unknown) => isMilestoneAssignmentWriteResult(value, current, requestBody) } : {}),
     });
     if (projectionIsCurrent(generation)) {
       dismissCasConflict();
@@ -490,9 +519,13 @@ async function updateIssue(payload: Record<string, unknown>, closeEditor = false
       priorityReadbackFailed.value = false;
       if (priorityOnly) pendingPriority.value = null;
       pendingMilestoneEdit.value = null;
-      if (closeEditor) editMode.value = false;
+      pendingMilestoneClosesEditor.value = false;
+      if (closeEditor) {
+        editMode.value = false;
+        hasIndependentMilestoneDraft.value = false;
+      }
       else if (edit.value.priority_key === current.priority) edit.value.priority_key = result.resource.priority;
-      if (closeEditor || edit.value.milestone === milestoneSelection(current.milestone)) edit.value.milestone = milestoneSelection(result.resource.milestone);
+      if (!hasIndependentMilestoneDraft.value) edit.value.milestone = milestoneSelection(result.resource.milestone);
       if (wasPending) await refreshPriorityFacts();
     }
   } catch (caught) {
@@ -500,7 +533,10 @@ async function updateIssue(payload: Record<string, unknown>, closeEditor = false
     if (priorityOnly) pendingPriority.value = prioritySaveIsUncertain(caught)
       ? { expected_version: requestBody.expected_version as number, priority_key: payload.priority_key as PriorityKey }
       : null;
-    if ("milestone_id" in requestBody) pendingMilestoneEdit.value = prioritySaveIsUncertain(caught) ? requestBody : null;
+    if ("milestone_id" in requestBody) {
+      pendingMilestoneEdit.value = prioritySaveIsUncertain(caught) ? requestBody : null;
+      pendingMilestoneClosesEditor.value = pendingMilestoneEdit.value !== null && closeEditor;
+    }
     if (!await recoverCasConflict(caught, current.identifier, payload, refreshCurrentFacts)) {
       setError(caught);
     }
@@ -546,6 +582,13 @@ async function saveEdit(): Promise<void> {
 
 function savePriority(priority: PriorityKey): void {
   if (priority !== issue.value?.priority) void updateIssue({ priority_key: priority });
+}
+
+function saveMilestone(value: string): void {
+  const current = issue.value;
+  if (!current || current.milestone === undefined || writeBusy.value || loading.value || casConflict.value || !canUpdate.value) return;
+  const change = milestoneAssignmentChange(value, current.milestone);
+  if (Object.hasOwn(change, "milestone_id")) void updateIssue(change);
 }
 
 async function runCommand(command: string, payload: Record<string, unknown> = {}): Promise<void> {
@@ -970,7 +1013,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
   <main class="issue-page page-shell issue-page--nuxt">
     <p v-if="priorityReadbackFailed" class="warning-panel" role="status">{{ ui("Priority was saved, but the latest Issue could not be read. Retry reading the current state.", "优先级已保存，但最新事项读取失败，请重试读取当前状态。") }} <UButton color="neutral" variant="ghost" type="button" :disabled="busy" @click="refreshPriorityFacts">{{ ui("Retry reading", "重试读取") }}</UButton></p>
     <p v-if="pendingPriority" class="warning-panel" role="status">{{ ui("Priority save is unconfirmed. Verify the original operation before continuing.", "优先级保存结果尚未确认，请核实原操作后继续。") }} <UButton color="neutral" variant="ghost" type="button" :disabled="busy || !canUpdate" @click="updateIssue(pendingPriority)">{{ ui("Verify save", "核实保存") }}</UButton></p>
-    <p v-if="pendingMilestoneEdit" class="warning-panel" role="status">{{ ui('Milestone assignment save is unconfirmed. Verify the original operation before continuing.', '里程碑归属保存结果尚未确认，请核实原操作后继续。') }} <UButton color="neutral" variant="ghost" type="button" :disabled="busy || !canUpdate" @click="updateIssue(pendingMilestoneEdit, true)">{{ ui('Verify save', '核实保存') }}</UButton></p>
+    <p v-if="pendingMilestoneEdit" class="warning-panel" role="status">{{ ui('Milestone assignment save is unconfirmed. Verify the original operation before continuing.', '里程碑归属保存结果尚未确认，请核实原操作后继续。') }} <UButton color="neutral" variant="ghost" type="button" :disabled="busy || !canUpdate" @click="updateIssue(pendingMilestoneEdit, pendingMilestoneClosesEditor)">{{ ui('Verify save', '核实保存') }}</UButton></p>
     <PageState :loading="loading" :error="error && !issue ? error : ''" :action-label="t('action.refresh')" @retry="load" />
     <template v-if="issue">
       <UButton color="neutral" variant="ghost" type="button" @click="backToBoard"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m8 4-6 6 6 6M2 10h15" /></svg>{{ t("action.back") }}</UButton>
@@ -994,7 +1037,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
             <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<UInput v-model="edit.title" maxlength="256" required :disabled="writeBusy || !canUpdate" /></label>
             <label>{{ t("issue.body") }}<UTextarea v-model="edit.body" :rows="12" :disabled="writeBusy || !canUpdate" /></label>
             <label>{{ t("issue.priority") }}<USelect v-model="edit.priority_key" :items="priorityOrder.map(key => ({ value: key, label: priorityLabel(key) }))" :aria-label="t('issue.priority')" :disabled="writeBusy || !canUpdate" /></label>
-            <MilestoneSelect v-model:value="edit.milestone" :workspace-id="issue.workspace.id" :project-id="issue.project.id" :current="issue.milestone" :reset-key="`${session.session_id}:${canUpdate}`" :disabled="writeBusy || !canUpdate" />
+            <MilestoneSelect v-model:value="edit.milestone" :workspace-id="issue.workspace.id" :project-id="issue.project.id" :current="issue.milestone" :reset-key="`${session.session_id}:${canUpdate}`" :disabled="writeBusy || !canUpdate || !!casConflict" />
             <p class="muted-copy">{{ ui('Choose No milestone to remove membership, or choose another milestone to move this Issue. Parent and child Issues are unchanged.', '选择“不归属里程碑”可移出，选择另一个里程碑可更换归属；父子事项各自设置。') }}</p>
             <div class="form-actions"><UButton color="neutral" variant="outline" type="button" :disabled="writeBusy" @click="editMode = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" type="submit" :disabled="writeBusy || !canUpdate || !!casConflict">{{ t("action.save") }}</UButton></div>
           </form>
@@ -1032,7 +1075,11 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
               <span v-else>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
             </dd></div>
             <div><dt>{{ locale === "zh-CN" ? "更新时间" : "Updated" }}</dt><dd>{{ formatTime(issue.updated_at) }}</dd></div>
-            <div><dt>{{ ui('Milestone', '里程碑') }}</dt><dd><button v-if="issue.milestone" class="text-button" type="button" @click="navigate(boardPath(issue.workspace.id, issue.project.id, { search: '', priorities: [], labels: [], milestone: issue.milestone.id, view: 'list', expanded: ['backlog', 'todo', 'in_progress', 'done', 'canceled'] }))">{{ issue.milestone.title }}</button><span v-else>{{ ui('No milestone', '不归属里程碑') }}</span></dd></div>
+            <div v-if="issue.milestone !== undefined"><dt>{{ ui('Milestone', '里程碑') }}</dt><dd>
+              <MilestoneSelect v-if="canUpdate" class="issue-milestone-select" hide-label :value="milestoneSelection(issue.milestone)" :workspace-id="issue.workspace.id" :project-id="issue.project.id" :current="issue.milestone" :reset-key="`${session.session_id}:${canUpdate}`" :disabled="writeBusy || loading || !!casConflict" @update:value="saveMilestone" />
+              <button v-else-if="issue.milestone" class="text-button" type="button" @click="navigate(boardPath(issue.workspace.id, issue.project.id, { search: '', priorities: [], labels: [], milestone: issue.milestone.id, view: 'list', expanded: ['backlog', 'todo', 'in_progress', 'done', 'canceled'] }))">{{ issue.milestone.title }}</button>
+              <span v-else>{{ ui('No milestone', '不归属里程碑') }}</span>
+            </dd></div>
           </dl>
 
           <div v-if="canUpdate" class="sidebar-actions">
@@ -1096,8 +1143,14 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
 .editor-panel :deep(.relative), .label-input :deep(.relative) { width: 100%; }
 .editor-panel { padding: 20px; border: 1px solid var(--color-border); border-radius: 12px; }
 .relation-row { min-width: 0; justify-content: flex-start; }
+.issue-milestone-select { min-width: 0; }
+.issue-milestone-select :deep(summary) { min-height: 32px; padding: 6px 3px; border: 0; border-radius: 6px; color: var(--ui-text); background: transparent; }
+.issue-milestone-select :deep(summary:hover:not([aria-disabled="true"])) { background: var(--ui-bg-muted); }
+.issue-milestone-select :deep(summary:focus-visible) { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
+.issue-milestone-select :deep(.milestone-options) { left: auto; right: 0; min-width: min(240px, calc(100vw - 48px)); max-width: min(360px, calc(100vw - 48px)); }
 @media (max-width: 940px) {
   .issue-page--nuxt :deep(button), .issue-page--nuxt :deep(input), .issue-page--nuxt :deep(select) { min-height: 44px; }
+  .issue-milestone-select :deep(summary) { min-height: 44px; }
 }
 @media (max-width: 640px) {
   .issue-page--nuxt { padding-top: 16px; }

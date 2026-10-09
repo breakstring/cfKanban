@@ -12,7 +12,7 @@ const events = new EventTarget();
 globalThis.window = { navigator: { languages: ["en"] }, location: { pathname: "/app/issues/CFK-1", search: "" }, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), dispatchEvent: events.dispatchEvent.bind(events), setTimeout, clearTimeout, scrollTo() {}, history: { pushState(_state, _unused, path) { const url = new URL(path, "https://example.test"); window.location.pathname = url.pathname; window.location.search = url.search; }, replaceState(_state, _unused, path) { this.pushState(_state, _unused, path); } } };
 globalThis.document = { cookie: "cfkanban_csrf=draft-test", visibilityState: "visible", documentElement: { dataset: {}, toggleAttribute() {} }, addEventListener() {}, removeEventListener() {} };
 const root = new URL("../../", import.meta.url).pathname;
-const output = await build({ stdin: { contents: `export * from './apps/web/src/lib/session-drafts.ts'; export { apiRequest } from './apps/web/src/lib/api.ts'; export { default as Issue } from './apps/web/src/views/IssueDetailView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as App } from './apps/web/src/App.vue'; export { default as DraftsPanel } from './apps/web/src/components/SessionDraftsPanel.vue'; export { default as RenderedDraftsPanel } from './apps/web/src/components/SessionDraftsPanel.vue?rendered';`, resolveDir: root }, bundle: true, write: false, format: "esm", platform: "node", logLevel: "silent", plugins: [nuxtUiTestPlugin(), { name: "session-drafts-vue", setup(builder) {
+const output = await build({ stdin: { contents: `export * from './apps/web/src/lib/session-drafts.ts'; export { apiRequest, clearPendingRequestIntents } from './apps/web/src/lib/api.ts'; export { default as Issue } from './apps/web/src/views/IssueDetailView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as App } from './apps/web/src/App.vue'; export { default as DraftsPanel } from './apps/web/src/components/SessionDraftsPanel.vue'; export { default as RenderedDraftsPanel } from './apps/web/src/components/SessionDraftsPanel.vue?rendered';`, resolveDir: root }, bundle: true, write: false, format: "esm", platform: "node", logLevel: "silent", plugins: [nuxtUiTestPlugin(), { name: "session-drafts-vue", setup(builder) {
   builder.onResolve({ filter: /\.vue\?rendered$/ }, args => ({ path: resolve(args.resolveDir, args.path.replace(/\?rendered$/, "")), namespace: "rendered-session-drafts" }));
   builder.onLoad({ filter: /.*/, namespace: "rendered-session-drafts" }, async ({ path }) => {
     const { descriptor } = parse(await readFile(path, "utf8"), { filename: path });
@@ -27,8 +27,8 @@ const output = await build({ stdin: { contents: `export * from './apps/web/src/l
   builder.onLoad({ filter: /.*/, namespace: "session-drafts-test" }, () => ({ contents: "export const en = {}; export const zh_cn = {};", loader: "js" }));
   builder.onResolve({ filter: /^vue$/ }, () => ({ path: new URL("../../node_modules/vue/index.mjs", import.meta.url).href, external: true }));
 } }] });
-const { registerSessionTextDraft, retainedSessionTextDrafts, setSessionDraftPrincipal, captureSessionTextDrafts, clearRetainedSessionTextDrafts, canRestoreSessionTextDraft, restoreSessionTextDraft, sessionTextDraftCopy, discardSessionTextDraft, changedTextFields, verifySessionTextDraftIdentity, Issue, Board, App, DraftsPanel, RenderedDraftsPanel, apiRequest } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString("base64")}`);
-afterEach(() => { clearRetainedSessionTextDrafts(); setSessionDraftPrincipal(null); globalThis.fetch = saved.fetch; });
+const { registerSessionTextDraft, retainedSessionTextDrafts, setSessionDraftPrincipal, captureSessionTextDrafts, clearRetainedSessionTextDrafts, canRestoreSessionTextDraft, restoreSessionTextDraft, sessionTextDraftCopy, discardSessionTextDraft, changedTextFields, verifySessionTextDraftIdentity, Issue, Board, App, DraftsPanel, RenderedDraftsPanel, apiRequest, clearPendingRequestIntents } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString("base64")}`);
+afterEach(() => { clearRetainedSessionTextDrafts(); setSessionDraftPrincipal(null); clearPendingRequestIntents("PATCH", "/api/v1/issues/CFK-1"); globalThis.fetch = saved.fetch; });
 after(() => Object.assign(globalThis, saved));
 const label = { en: "Draft", zh: "草稿" };
 const flush = async () => { for (let index = 0; index < 12; index++) { await Promise.resolve(); await nextTick(); } };
@@ -104,6 +104,118 @@ const workspaceId = "11111111-1111-4111-8111-111111111111", projectId = "2222222
 const session = { principal: { id: "principal-a", display_name: "Pat", version: 1, is_owner: false }, session_id: "session-a", expires_at: new Date(Date.now() + 8 * 3600000).toISOString(), source: { kind: "credential", id: "source" }, target: { kind: "project_selection" }, allowed_scope: { kind: "project_selection", projects: [{ workspace_id: workspaceId, project_id: projectId, role: "writer" }] } };
 const issue = { id: "issue", identifier: "CFK-1", title: "Remote title", body: "Remote body", deleted_at: null, version: 3, priority: "none", status: { key: "todo", display_name: "To do" }, assignee: null, labels: [], allowed_actions: ["update"], workspace: { id: workspaceId, display_name: "Team" }, project: { id: projectId, display_name: "Project" } };
 function mount(component, props = {}) { const app = renderer.createApp({ render: () => h({ ...component, render: () => null }, props) }); app.mount(node()); return { app, state: app._instance.subTree.component.setupState }; }
+
+const openMilestone = { id: "33333333-3333-4333-8333-333333333333", title: "Release", status_key: "open", due_date: null };
+const closedMilestone = { id: "44444444-4444-4444-8444-444444444444", title: "Previous release", status_key: "closed", due_date: "2026-10-30" };
+async function milestoneIssueFixture(onPatch) {
+  const fixture = { remote: { ...issue, milestone: null }, writes: [], reads: 0 };
+  fixture.commit = milestoneId => {
+    fixture.remote = { ...fixture.remote, version: fixture.remote.version + 1, milestone: milestoneId === undefined ? fixture.remote.milestone : milestoneId === null ? null : [openMilestone, closedMilestone].find(item => item.id === milestoneId) };
+    return { resource: structuredClone(fixture.remote) };
+  };
+  globalThis.fetch = async (path, init) => {
+    assert.ok(path.startsWith("/api/v1/"), "the fixture handles only isolated relative API requests");
+    if (path === "/api/v1/issues/CFK-1" && init.method === "PATCH") {
+      const request = { body: JSON.parse(init.body), key: init.headers.get("idempotency-key") };
+      fixture.writes.push(request);
+      return onPatch ? onPatch(fixture, request) : Response.json(fixture.commit(request.body.milestone_id));
+    }
+    assert.equal(init.method, "GET");
+    if (path === "/api/v1/issues/CFK-1") { fixture.reads++; return Response.json(fixture.remote); }
+    return Response.json({ items: [], next_cursor: null });
+  };
+  Object.assign(fixture, mount(Issue, { identifier: "CFK-1", session }));
+  await flush();
+  return fixture;
+}
+
+test("actual Issue milestone shortcuts save only membership and preserve text drafts while blocking unchanged or unavailable edits", async () => {
+  const f = await milestoneIssueFixture();
+  try {
+    f.state.editMode = true; f.state.edit.body = "Unsaved description"; f.state.edit.title = "Unsaved title"; f.state.edit.milestone = closedMilestone.id;
+    f.state.saveMilestone("none"); await flush(); assert.equal(f.writes.length, 0);
+    f.state.saveMilestone(openMilestone.id); await flush();
+    assert.deepEqual(f.writes[0].body, { expected_version: 3, milestone_id: openMilestone.id });
+    assert.equal(f.state.issue.milestone.id, openMilestone.id);
+    f.state.saveMilestone(openMilestone.id); await flush(); assert.equal(f.writes.length, 1);
+    f.state.saveMilestone(closedMilestone.id); await flush();
+    f.state.saveMilestone("none"); await flush();
+    assert.deepEqual(f.writes.map(request => request.body), [
+      { expected_version: 3, milestone_id: openMilestone.id },
+      { expected_version: 4, milestone_id: closedMilestone.id },
+      { expected_version: 5, milestone_id: null },
+    ]);
+    assert.equal(f.state.issue.milestone, null);
+    assert.equal(f.state.edit.milestone, closedMilestone.id, "a separate draft stays independent even when a shortcut temporarily matches it");
+    assert.equal(f.state.editMode, true); assert.equal(f.state.edit.body, "Unsaved description"); assert.equal(f.state.edit.title, "Unsaved title");
+    f.state.busy = true; f.state.saveMilestone(openMilestone.id); f.state.busy = false;
+    f.state.issue.allowed_actions = []; f.state.saveMilestone(openMilestone.id);
+    f.state.issue.allowed_actions = ["update"]; delete f.state.issue.milestone; f.state.saveMilestone(openMilestone.id);
+    await flush(); assert.equal(f.writes.length, 3, "busy, reader and older Service projections do not dispatch");
+    assert.ok(f.writes.every(request => typeof request.key === "string" && request.key.length > 0));
+    await f.state.load(false); await flush();
+    f.state.edit.body = "Another unsaved description";
+    for (const milestone of [openMilestone.id, closedMilestone.id, "none", openMilestone.id]) {
+      f.state.saveMilestone(milestone); await flush();
+      assert.equal(f.state.edit.milestone, milestone, "an unchanged membership draft follows each shortcut");
+    }
+    await f.state.saveEdit(); await flush();
+    assert.deepEqual(f.writes.at(-1).body, { expected_version: 10, body: "Another unsaved description", priority_key: "none", title: "Remote title" });
+    assert.equal(f.state.issue.milestone.id, openMilestone.id, "saving text does not undo the shortcut assignment");
+    assert.equal(f.state.editMode, false);
+  } finally { f.app.unmount(); }
+});
+
+test("actual Issue milestone unknown or invalid success responses recover the exact original body and key without closing the editor", async () => {
+  for (const invalidSuccess of [false, true]) {
+    let committed;
+    const f = await milestoneIssueFixture((fixture, request) => {
+      if (fixture.writes.length === 1) {
+        committed = fixture.commit(request.body.milestone_id);
+        if (!invalidSuccess) throw new Error("Synthetic response lost after commit");
+        return Response.json({ resource: { ...committed.resource, project: { id: workspaceId } } });
+      }
+      return Response.json({ ...committed, idempotent_replay: true });
+    });
+    try {
+      f.state.editMode = true; f.state.edit.body = "Keep this unsaved description";
+      f.state.saveMilestone(closedMilestone.id); await flush();
+      assert.equal(f.writes.length, 1);
+      assert.equal(f.state.issue.milestone, null, "membership waits for a valid confirmed resource");
+      assert.deepEqual(f.state.pendingMilestoneEdit, { expected_version: 3, milestone_id: closedMilestone.id });
+      assert.equal(f.state.pendingMilestoneClosesEditor, false);
+      assert.equal(f.state.writeBusy, true);
+      f.state.saveMilestone("none"); await flush(); assert.equal(f.writes.length, 1);
+      await f.state.updateIssue(f.state.pendingMilestoneEdit, f.state.pendingMilestoneClosesEditor); await flush();
+      assert.equal(f.writes.length, 2); assert.deepEqual(f.writes[1], f.writes[0]);
+      assert.equal(f.state.pendingMilestoneEdit, null); assert.equal(f.state.writeBusy, false);
+      assert.equal(f.state.issue.milestone.id, closedMilestone.id);
+      assert.equal(f.state.editMode, true); assert.equal(f.state.edit.body, "Keep this unsaved description");
+    } finally { f.app.unmount(); clearPendingRequestIntents("PATCH", "/api/v1/issues/CFK-1"); }
+  }
+});
+
+test("actual Issue milestone CAS conflict reads current facts and keeps the draft without automatic replay", async () => {
+  const f = await milestoneIssueFixture((fixture, request) => {
+    if (fixture.writes.length > 1) return Response.json(fixture.commit(request.body.milestone_id));
+    fixture.remote = { ...fixture.remote, version: 7, body: "Changed remotely" };
+    const requestId = crypto.randomUUID();
+    return Response.json({ category: "conflict", code: "VERSION_CONFLICT", details: { current_version: 7 }, message: "Changed concurrently", recovery: "refresh_resource", request_id: requestId, retryable: false, source: "service" }, { status: 409, headers: { "x-request-id": requestId } });
+  });
+  try {
+    f.state.editMode = true; f.state.edit.body = "My unsaved description";
+    f.state.saveMilestone(openMilestone.id); await flush(); await flush();
+    assert.equal(f.writes.length, 1); assert.equal(f.reads, 2);
+    assert.equal(f.state.issue.version, 7); assert.equal(f.state.issue.milestone, null);
+    assert.equal(f.state.casConflict.readbackState, "complete");
+    assert.equal(f.state.editMode, true); assert.equal(f.state.edit.body, "My unsaved description");
+    f.state.saveMilestone(closedMilestone.id); await flush(); assert.equal(f.writes.length, 1);
+    f.state.dismissCasConflict(); f.state.saveMilestone(closedMilestone.id); await flush();
+    assert.equal(f.writes.length, 2);
+    assert.deepEqual(f.writes[1].body, { expected_version: 7, milestone_id: closedMilestone.id });
+    assert.notEqual(f.writes[1].key, f.writes[0].key, "an explicit decision with current CAS is a new operation");
+  } finally { f.app.unmount(); }
+});
 
 test("late-mounted draft panel offers copy fallback and restores only after explicit confirmation", async () => {
   setSessionDraftPrincipal(session.principal.id); let input = "", confirmations = 0, confirmed = false;

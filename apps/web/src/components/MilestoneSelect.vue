@@ -6,7 +6,7 @@ import { ColumnPagination } from "../lib/column-pagination";
 import { locale } from "../lib/i18n";
 import type { IssueMilestone, ListResult, MilestoneResource } from "../types";
 
-const props = defineProps<{ workspaceId: string; projectId: string; value: string; current?: IssueMilestone | null | undefined; allowAny?: boolean; disabled?: boolean; resetKey?: string }>();
+const props = defineProps<{ workspaceId: string; projectId: string; value: string; current?: IssueMilestone | null | undefined; allowAny?: boolean; hideLabel?: boolean; disabled?: boolean; resetKey?: string }>();
 const emit = defineEmits<{ "update:value": [value: string] }>();
 const page = reactive(new ColumnPagination<MilestoneResource>());
 const menu = ref<HTMLDetailsElement | null>(null);
@@ -77,7 +77,7 @@ function onKeydown(event: KeyboardEvent): void {
 
 <template>
   <details ref="menu" class="milestone-select" @toggle="opened" @keydown="onKeydown">
-    <summary :aria-disabled="disabled" :title="selectionLabel" @click="disabled && $event.preventDefault()">{{ ui("Milestone", "里程碑") }} · {{ selectionLabel }}</summary>
+    <summary :aria-disabled="disabled" :aria-label="`${ui('Milestone', '里程碑')} · ${selectionLabel}`" :title="selectionLabel" @click="disabled && $event.preventDefault()"><template v-if="!hideLabel">{{ ui("Milestone", "里程碑") }} · </template>{{ selectionLabel }}</summary>
     <div class="milestone-options" :aria-label="ui('Choose milestone', '选择里程碑')">
       <button v-if="allowAny" type="button" :disabled="disabled" :aria-pressed="value === 'all'" @click="select('all')">{{ ui('Any milestone', '不限里程碑') }}</button>
       <button type="button" :disabled="disabled" :aria-pressed="value === 'none'" @click="select('none')">{{ ui('No milestone', '不归属里程碑') }}</button>
