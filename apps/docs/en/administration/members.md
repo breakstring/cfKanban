@@ -29,7 +29,7 @@ If this person also has administrator access, explain the access that would rema
 
 You need the same management access as for invitations. Verify the intended person when names are ambiguous.
 
-**In the Web UI:** The Owner can select a Project under **Members & access → Project access**, or use **Workspaces & Projects → Administrators and members**. On Project management pages, **Effective members and permission sources** shows access sources. **Direct memberships** offers name search, role changes, removal, and regranting. Invite new members who do not appear among visible candidates.
+**In the Web UI:** The Owner can select a Project under **Members & access → Project access**, or use **Workspaces & Projects → Project settings → Management**. On Project management pages, **Effective members and permission sources** shows access sources. **Direct memberships** offers name search, role changes, removal, and regranting. Invite new members who do not appear among visible candidates.
 
 Effective permissions combine all active sources. Removing ordinary membership does not remove direct Project administration or inherited Workspace administration. A `reader` grant cannot reduce existing administration. Check every source before removing all access. If Public Join remains enabled, a removed member can join again.
 

@@ -1,8 +1,30 @@
 import { boardPath, boardReturnPath } from "./board-navigation";
 import { hasManagementActions, managementPath } from "./scoped-management";
+import { canAccessOwnerControlPlane } from "./session-capabilities";
 import type { ContainerResource, WebSessionView } from "../types";
 
 export type ProjectSettingsSection = "management" | "labels" | "activity" | "deleted";
+export const ownerWorkspacesReturnTarget = "owner-workspaces";
+export type ProjectSettingsReturnTarget = typeof ownerWorkspacesReturnTarget;
+
+export function ownerWorkspacesReturnPath(session: WebSessionView, workspaceId: string, query: string): string | null {
+  const targets = new URLSearchParams(query).getAll("return");
+  if (!canAccessOwnerControlPlane(session) || targets.length !== 1 || targets[0] !== ownerWorkspacesReturnTarget) return null;
+  return `/app/admin?${new URLSearchParams({ section: "workspaces", workspace: workspaceId })}`;
+}
+
+export function ownerWorkspaceSettingsPath(workspaceId: string): string {
+  return `${managementPath(workspaceId)}&${new URLSearchParams({ section: "settings", return: ownerWorkspacesReturnTarget })}`;
+}
+
+export function ownerProjectSettingsPath(
+  workspaceId: string,
+  projectId: string,
+  section: ProjectSettingsSection = "management",
+  archived = false,
+): string {
+  return projectSettingsPath(workspaceId, projectId, section, undefined, archived, ownerWorkspacesReturnTarget);
+}
 
 export function projectSettingsPath(
   workspaceId: string,
@@ -10,9 +32,11 @@ export function projectSettingsPath(
   section: ProjectSettingsSection,
   returnTo = boardPath(workspaceId, projectId),
   archived = false,
+  returnTarget?: ProjectSettingsReturnTarget,
 ): string {
   const from = boardReturnPath(workspaceId, projectId, new URLSearchParams({ from: returnTo }).toString());
   const query = new URLSearchParams({ from });
+  if (returnTarget === ownerWorkspacesReturnTarget) query.set("return", returnTarget);
   if (section === "management") {
     if (archived) query.set("archived", "1");
     return `${managementPath(workspaceId, projectId)}&${query}`;

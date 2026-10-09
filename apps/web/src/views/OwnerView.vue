@@ -2,6 +2,8 @@
 import UTextarea from "@nuxt/ui/components/Textarea.vue";
 import UInput from "@nuxt/ui/components/Input.vue";
 import UButton from "@nuxt/ui/components/Button.vue";
+import UDropdownMenu from "@nuxt/ui/components/DropdownMenu.vue";
+import type { DropdownMenuItem } from "@nuxt/ui";
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 
 import ContainerIdentityDetails from "../components/ContainerIdentityDetails.vue";
@@ -49,7 +51,7 @@ import {
 import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
 import { publicJoinRiskNotice } from "../lib/public-join-risk";
 import { navigate } from "../lib/router";
-import { managementPath } from "../lib/scoped-management";
+import { ownerProjectSettingsPath, ownerWorkspaceSettingsPath } from "../lib/project-settings";
 import { changedTextFields, useSessionTextDraft } from "../lib/session-drafts";
 import { WriteFence } from "../lib/write-fence";
 import type {
@@ -430,6 +432,29 @@ function ui(english: string, chinese: string): string {
   return locale.value === "zh-CN" ? chinese : english;
 }
 
+function workspaceMoreActions(workspace: ContainerResource): DropdownMenuItem[][] {
+  return [
+    ...(workspace.allowed_actions?.includes("update") ? [[{
+      label: ui("Rename workspace", "重命名工作区"), disabled: busy.value,
+      onSelect: () => openContainerEdit("workspace", workspace),
+    }]] : []),
+    ...(workspace.allowed_actions?.includes("delete") ? [[{
+      label: ui("Archive workspace", "归档工作区"), color: "error" as const, disabled: busy.value,
+      onSelect: () => deleteContainer("workspace", workspace),
+    }]] : []),
+  ];
+}
+
+function projectMoreActions(item: ProjectEntry): DropdownMenuItem[][] {
+  return [
+    [{ label: ui("Public Join", "公开加入"), disabled: busy.value, onSelect: () => openPolicy(item) }],
+    ...(item.allowed_actions?.includes("delete") ? [[{
+      label: ui("Archive project", "归档项目"), color: "error" as const, disabled: busy.value,
+      onSelect: () => deleteContainer("project", item, item.workspaceId),
+    }]] : []),
+  ];
+}
+
 function roleLabel(role: string): string {
   if (locale.value !== "zh-CN") return role;
   if (role === "owner") return "所有者";
@@ -591,12 +616,28 @@ function sectionPath(section: OwnerSection): string {
 }
 
 const fetchContainers = (path: string) => apiRequest<ListResult<ContainerResource>>(path);
+let workspaceTreeRequestId = 0;
 async function loadWorkspaceTree(includeDeleted = props.section === "archive"): Promise<void> {
+  const requestId = ++workspaceTreeRequestId;
   containerTree.reset();
   await Promise.all([
     containerTree.loadWorkspaces(fetchContainers, "active", includeDeleted),
     ...(includeDeleted ? [containerTree.loadWorkspaces(fetchContainers, "archived", true)] : []),
   ]);
+  const isCurrent = () => ownerViewMounted && requestId === workspaceTreeRequestId && props.section === "workspaces";
+  if (!isCurrent() || includeDeleted || !initialWorkspace || !UUID_PATTERN.test(initialWorkspace)
+    || new URLSearchParams(window.location.search).getAll("workspace").length !== 1
+    || workspaces.value.some(workspace => workspace.id === initialWorkspace)) return;
+  try {
+    const workspace = await apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(initialWorkspace)}`, { authorizationCurrent: isCurrent });
+    if (!isCurrent() || workspace.id !== initialWorkspace || workspace.deleted_at !== null || !workspace.allowed_actions?.includes("read")) return;
+    workspaces.value = mergePageById(workspaces.value, [workspace]);
+    if (!containerTree.projectPage(workspace.id, "active").loaded) {
+      await containerTree.loadProjects(fetchContainers, workspace.id, "active");
+    }
+  } catch (caught) {
+    if (isCurrent()) setError(caught);
+  }
 }
 async function moreWorkspaces(state: ContainerState): Promise<void> {
   await containerTree.loadWorkspaces(fetchContainers, state, props.section === "archive");
@@ -1854,13 +1895,49 @@ onUnmounted(() => {
     </template>
 
     <template v-if="!loading && section === 'workspaces'">
-      <div class="section-action-bar workspace-actions"><UButton color="neutral" variant="outline" class="secondary-button" type="button" @click="showWorkspace = true">{{ ui("New workspace", "新建工作区") }}</UButton></div>
+      <div class="section-action-bar workspace-actions">
+        <UButton color="primary" variant="solid" icon="i-lucide-plus" type="button" :disabled="busy" @click="showWorkspace = true">{{ ui("New workspace", "新建工作区") }}</UButton>
+      </div>
       <p v-if="workspaces.length === 0" class="empty-copy">{{ ui("Create a workspace first, then add your first project.", "先创建一个工作区，再添加你的第一个项目。") }}</p>
-      <section v-for="workspace in workspaces" :key="workspace.id" class="workspace-block">
-        <header><h2><UButton color="neutral" variant="ghost" class="workspace-toggle" type="button" :aria-expanded="expandedWorkspaces.includes(workspace.id)" :aria-controls="`workspace-projects-${workspace.id}`" @click="toggleWorkspace(workspace.id)"><span class="workspace-chevron" aria-hidden="true">{{ expandedWorkspaces.includes(workspace.id) ? '▾' : '▸' }}</span><ContainerIcon kind="workspace" /><span>{{ workspace.display_name }}</span><span class="workspace-count">{{ projects.filter(project => project.workspaceId === workspace.id).length }} {{ ui('projects', '个项目') }}</span></UButton></h2><div><UButton color="neutral" variant="ghost" v-if="workspace.allowed_actions?.includes('manage_administrators')" class="text-button" type="button" @click="navigate(managementPath(workspace.id))">{{ ui("Administrators and settings", "管理员与设置") }}</UButton><UButton color="neutral" variant="outline" class="secondary-button" type="button" @click="openCreateProject(workspace.id)">{{ ui("New project", "新建项目") }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" @click="openContainerEdit('workspace', workspace)">{{ ui("Rename", "改名") }}</UButton><UButton color="error" variant="ghost" class="danger-text-button" type="button" @click="deleteContainer('workspace', workspace)">{{ ui("Archive", "归档") }}</UButton></div></header>
-        <div v-show="expandedWorkspaces.includes(workspace.id)" :id="`workspace-projects-${workspace.id}`" class="workspace-projects"><div class="project-table"><div v-for="item in projects.filter((project) => project.workspaceId === workspace.id)" :key="item.id" class="project-table-row"><div class="project-name-and-state"><UButton color="neutral" variant="ghost" class="project-link" type="button" @click="navigate(`/app/w/${workspace.id}/p/${item.id}`)"><ContainerIcon kind="project" /><strong>{{ item.display_name }}</strong></UButton><PublicJoinStatusIcon :enabled="item.public_join_enabled" /></div><span>{{ item.context ? `${item.context.slice(0, 60)}${item.context.length > 60 ? '…' : ''}` : '—' }}</span><div><UButton color="neutral" variant="ghost" v-if="item.allowed_actions?.includes('manage_administrators')" class="text-button" type="button" @click="navigate(managementPath(item.workspaceId, item.id))">{{ ui("Administrators and members", "管理员与成员") }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" @click="openProjectSettings(item)">{{ ui("Settings", "设置") }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" @click="openPolicy(item)">{{ ui("Public Join", "公开加入") }}</UButton><UButton color="error" variant="ghost" class="danger-text-button" type="button" @click="deleteContainer('project', item, workspace.id)">{{ ui("Archive", "归档") }}</UButton></div></div><p v-if="!projects.some((project) => project.workspaceId === workspace.id)" class="empty-copy">{{ ui("No projects yet", "暂无项目") }}</p></div></div>
+      <section v-for="workspace in workspaces" :key="workspace.id" class="workspace-block workspace-tree">
+        <header>
+          <h2>
+            <UButton color="neutral" variant="ghost" class="workspace-toggle" type="button" :aria-expanded="expandedWorkspaces.includes(workspace.id)" :aria-controls="`workspace-projects-${workspace.id}`" @click="toggleWorkspace(workspace.id)">
+              <span class="workspace-chevron" aria-hidden="true">{{ expandedWorkspaces.includes(workspace.id) ? '▾' : '▸' }}</span>
+              <ContainerIcon kind="workspace" />
+              <span class="workspace-name">{{ workspace.display_name }}</span>
+              <span class="workspace-count">{{ projects.filter(project => project.workspaceId === workspace.id).length }} {{ ui('projects', '个项目') }}</span>
+            </UButton>
+          </h2>
+          <div class="workspace-row-actions">
+            <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-plus" type="button" :disabled="busy" @click="openCreateProject(workspace.id)">{{ ui("New project", "新建项目") }}</UButton>
+            <UButton v-if="workspace.allowed_actions?.includes('manage_administrators')" color="neutral" variant="ghost" size="sm" icon="i-lucide-settings-2" class="workspace-settings-button" type="button" :title="ui(`Workspace settings for ${workspace.display_name}`, `${workspace.display_name}的工作区设置`)" :aria-label="ui(`Workspace settings for ${workspace.display_name}`, `${workspace.display_name}的工作区设置`)" @click="navigate(ownerWorkspaceSettingsPath(workspace.id))"><span class="workspace-settings-label">{{ ui("Workspace settings", "工作区设置") }}</span></UButton>
+            <UDropdownMenu v-if="workspaceMoreActions(workspace).length" :items="workspaceMoreActions(workspace)" :portal="true" :content="{ align: 'end', sideOffset: 4, collisionPadding: 8 }" :ui="{ content: 'w-48 max-w-[calc(100vw-16px)]', item: 'min-h-9 max-[940px]:min-h-11' }">
+              <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-ellipsis" class="container-more" type="button" :disabled="busy" :title="ui(`More actions for ${workspace.display_name}`, `${workspace.display_name}的更多操作`)" :aria-label="ui(`More actions for ${workspace.display_name}`, `${workspace.display_name}的更多操作`)" />
+            </UDropdownMenu>
+          </div>
+        </header>
+        <div v-show="expandedWorkspaces.includes(workspace.id)" :id="`workspace-projects-${workspace.id}`" class="workspace-projects">
+          <div class="project-table">
+            <div v-for="item in projects.filter(project => project.workspaceId === workspace.id)" :key="item.id" class="project-table-row workspace-project-row">
+              <div class="project-summary">
+                <div class="project-name-and-state">
+                  <UButton color="neutral" variant="ghost" class="project-link" type="button" @click="navigate(`/app/w/${workspace.id}/p/${item.id}`)"><ContainerIcon kind="project" /><strong>{{ item.display_name }}</strong></UButton>
+                  <PublicJoinStatusIcon :enabled="item.public_join_enabled" />
+                </div>
+                <p v-if="item.context" class="project-description" :title="item.context">{{ item.context }}</p>
+              </div>
+              <div class="project-row-actions">
+                <UButton v-if="item.allowed_actions?.includes('update') || item.allowed_actions?.includes('manage_administrators')" color="neutral" variant="ghost" size="sm" icon="i-lucide-settings-2" type="button" @click="navigate(ownerProjectSettingsPath(item.workspaceId, item.id))">{{ ui("Project settings", "项目设置") }}</UButton>
+                <UDropdownMenu :items="projectMoreActions(item)" :portal="true" :content="{ align: 'end', sideOffset: 4, collisionPadding: 8 }" :ui="{ content: 'w-48 max-w-[calc(100vw-16px)]', item: 'min-h-9 max-[940px]:min-h-11' }">
+                  <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-ellipsis" class="container-more" type="button" :disabled="busy" :title="ui(`More actions for ${item.display_name}`, `${item.display_name}的更多操作`)" :aria-label="ui(`More actions for ${item.display_name}`, `${item.display_name}的更多操作`)" />
+                </UDropdownMenu>
+              </div>
+            </div>
+            <p v-if="!projects.some(project => project.workspaceId === workspace.id)" class="empty-copy">{{ ui('No projects yet', '暂无项目') }}</p>
+          </div>
+        </div>
       </section>
-
     </template>
 
     <template v-if="!loading && section === 'archive'">
@@ -2099,3 +2176,29 @@ onUnmounted(() => {
     </ModalDialog>
   </main>
 </template>
+
+<style scoped>
+.workspace-tree > header { gap: 16px; }
+.workspace-tree .workspace-toggle { flex-wrap: wrap; gap: 8px; }
+.workspace-name { overflow-wrap: anywhere; }
+.workspace-tree .workspace-row-actions, .workspace-project-row .project-row-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.workspace-project-row { grid-template-columns: minmax(0, 1fr) auto; }
+.workspace-project-row > .project-summary { display: grid; min-width: 0; gap: 3px; }
+.workspace-project-row .project-name-and-state { display: flex; align-items: center; min-width: 0; gap: 8px; padding: 0; }
+.workspace-project-row .project-link { white-space: normal; }
+.workspace-project-row .project-link strong { overflow-wrap: anywhere; }
+.project-description { margin: 0 0 0 28px; color: var(--color-text-muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.container-more { min-width: 32px; justify-content: center; }
+@media (max-width: 940px) {
+  .workspace-row-actions :deep(button), .project-row-actions :deep(button) { min-height: 44px; }
+  .container-more { min-width: 44px; }
+}
+@media (max-width: 700px) {
+  .workspace-tree > header h2 { flex-basis: 100%; }
+  .workspace-tree .workspace-row-actions { justify-content: flex-end; width: 100%; }
+  .workspace-settings-label { display: none; }
+  .workspace-settings-button { min-width: 44px; justify-content: center; }
+  .workspace-project-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .workspace-project-row .project-row-actions { justify-content: flex-end; }
+}
+</style>

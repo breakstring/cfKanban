@@ -24,7 +24,7 @@ Check current usage and explain the effects before applying these settings.
 
 The `50 / 500 / 50` values are an example choice, not defaults applied automatically. All three limits must be explicit when enabling. A limit may be lower than current usage: existing content and access remain, while operations that increase the corresponding count are blocked.
 
-**In the Web UI:** As Owner, open **Administration → Workspaces & Projects → Public Join** for the Project. Review the risk explanation, public summary, current usage, and three quotas, then confirm enabling or updating the policy.
+**In the Web UI:** As Owner, open **Administration → Workspaces & Projects**, then the Project row's more-actions menu → **Public Join**. Review the risk explanation, public summary, current usage, and three quotas, then confirm enabling or updating the policy.
 
 Membership includes ordinary members, direct Project administrators, and inherited Workspace administrators. Each non-Owner identity counts once. Soft-deleting content or revoking the relevant membership can free active capacity; restoration or regranting consumes it again. These quotas are enforced while Public Join is enabled for the Project.
 

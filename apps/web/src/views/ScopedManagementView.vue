@@ -19,6 +19,7 @@ import { continuationCursor } from "../lib/pagination";
 import { navigate } from "../lib/router";
 import { protectNavigationDraft } from "../lib/navigation-draft";
 import { projectReturnTarget } from "../lib/project-navigation";
+import { ownerProjectSettingsPath, ownerWorkspacesReturnPath, ownerWorkspacesReturnTarget, projectSettingsPath } from "../lib/project-settings";
 import { hasManagementActions, managementPath, remainingAccessSources, sourceLabel } from "../lib/scoped-management";
 import { changedTextFields, useSessionTextDraft } from "../lib/session-drafts";
 import type { AccessSource, AdministratorCandidate, AdministratorResource, ContainerResource, GrantResource, ListResult, MemberCandidate, ProjectMember, ProjectStatusResource, WebSessionView } from "../types";
@@ -42,9 +43,12 @@ const archived = ref(false);
 const draft = ref({ display_name: "", context: "" });
 const projectName = ref("");
 let projectNameBaseline = "";
-const section = ref<"projects" | "members" | "settings">("projects");
+const requestedSections = new URLSearchParams(window.location.search).getAll("section");
+const section = ref<"projects" | "members" | "settings">(!props.projectId && requestedSections.length === 1
+  && (requestedSections[0] === "settings" || requestedSections[0] === "members") ? requestedSections[0] : "projects");
 const returnPath = new URLSearchParams(window.location.search).get("from");
 const returnProject = computed(() => projectReturnTarget(returnPath, props.session.allowed_scope.projects ?? []));
+const ownerReturnPath = computed(() => ownerWorkspacesReturnPath(props.session, props.workspaceId, window.location.search));
 const administratorCandidate = ref<AdministratorCandidate | null>(null);
 const memberCandidate = ref<MemberCandidate | null>(null);
 const memberRole = ref<"reader" | "writer">("writer");
@@ -239,7 +243,8 @@ async function write(path: string, method: string, body?: unknown, nextArchived?
     confirmation.value = null;
     conflict.value = null;
     if (nextArchived !== undefined && props.projectId) {
-      navigate(`${managementPath(props.workspaceId, props.projectId)}${nextArchived ? "&archived=1" : ""}`, true);
+      navigate(projectSettingsPath(props.workspaceId, props.projectId, "management", returnPath ?? undefined, nextArchived,
+        ownerReturnPath.value ? ownerWorkspacesReturnTarget : undefined), true);
     } else {
       await load(true);
     }
@@ -342,7 +347,8 @@ async function returnToProject(): Promise<void> {
       <template #actions><UButton color="neutral" variant="ghost" type="button" :disabled="busy || loading" @click="refresh">{{ t('action.refresh') }}</UButton></template>
     </ProjectSettingsHeader>
     <header v-else class="page-title-block">
-      <UButton color="neutral" variant="ghost" v-if="returnProject" class="text-button" type="button" @click="returnToProject">← {{ ui('Back to', '返回') }} {{ returnProject.workspace_display_name }} / {{ returnProject.project_display_name }}</UButton>
+      <UButton color="neutral" variant="ghost" v-if="ownerReturnPath" class="text-button" type="button" @click="navigate(ownerReturnPath)">← {{ ui('Back to management', '返回管理中心') }}</UButton>
+      <UButton color="neutral" variant="ghost" v-else-if="returnProject" class="text-button" type="button" @click="returnToProject">← {{ ui('Back to', '返回') }} {{ returnProject.workspace_display_name }} / {{ returnProject.project_display_name }}</UButton>
       <p class="eyebrow">{{ ui('Workspace management', '工作区管理') }}</p>
       <h1>{{ resource?.display_name ?? ui('Management', '管理') }}</h1>
       <div class="form-actions">
@@ -380,7 +386,7 @@ async function returnToProject(): Promise<void> {
         <UButton color="neutral" variant="ghost" class="text-button" :disabled="busy" type="button" @click="toggleArchive">{{ archived ? ui('Show active projects', '显示有效项目') : ui('Show archived projects', '显示归档项目') }}</UButton>
         <div v-for="project in projects" :key="project.id" class="management-row management-project-row">
           <strong>{{ project.display_name }}</strong>
-          <UButton color="neutral" variant="ghost" v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(`${managementPath(workspaceId, project.id)}${project.deleted_at ? '&archived=1' : ''}${returnProject && returnPath ? `&from=${encodeURIComponent(returnPath)}` : ''}`)">{{ ui('Manage', '管理') }}</UButton>
+          <UButton color="neutral" variant="ghost" v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(ownerReturnPath ? ownerProjectSettingsPath(workspaceId, project.id, 'management', project.deleted_at != null) : `${managementPath(workspaceId, project.id)}${project.deleted_at ? '&archived=1' : ''}${returnProject && returnPath ? `&from=${encodeURIComponent(returnPath)}` : ''}`)">{{ ui('Manage', '管理') }}</UButton>
           <UButton color="neutral" variant="ghost" v-if="project.allowed_actions?.includes('delete')" class="text-button" type="button" :disabled="busy" @click="confirmArchive(project, false)">{{ ui('Archive', '归档') }}</UButton>
           <UButton color="neutral" variant="outline" v-if="project.allowed_actions?.includes('restore')" class="secondary-button" type="button" :disabled="busy" @click="confirmArchive(project, true)">{{ t('action.restore') }}</UButton>
         </div>

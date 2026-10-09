@@ -106,6 +106,38 @@ function fixture(session = ownerSession) {
 const retained = key => retainedSessionTextDrafts.value.find(draft => draft.key === key);
 function start(session = ownerSession) { clearRetainedSessionTextDrafts(); setSessionDraftPrincipal(session.principal.id); return fixture(session); }
 async function ownerPage() { const view = mount(Owner, { section: "workspaces", session: ownerSession }); await flush(); assert.equal(view.state.loading, false); return view; }
+
+test("Owner more menus honor current container actions and keep opening or canceling operations read-only", async () => {
+  const backend = start();
+  const view = await ownerPage();
+  const savedConfirm = window.confirm;
+  try {
+    assert.deepEqual(view.state.workspaceMoreActions({ ...backend.workspace, allowed_actions: ["read"] }), []);
+    const workspace = { ...backend.workspace, allowed_actions: ["read", "update", "delete"] };
+    const workspaceActions = view.state.workspaceMoreActions(workspace).flat();
+    workspaceActions[0].onSelect();
+    assert.equal(view.state.containerEdit.item.id, workspaceId);
+    assert.equal(view.state.showContainerEdit, true);
+    view.state.showContainerEdit = false;
+    const projectActions = view.state.projectMoreActions({ ...view.state.projects[0], allowed_actions: ["read", "delete"] }).flat();
+    await projectActions[0].onSelect();
+    assert.equal(view.state.showPolicy, true);
+    assert.equal(view.state.policyRiskConfirmed, false);
+    assert.equal(view.state.selectedProject.id, projectId);
+    let confirmations = 0;
+    window.confirm = () => { confirmations++; return false; };
+    await workspaceActions[1].onSelect();
+    await projectActions[1].onSelect();
+    assert.equal(confirmations, 2);
+    assert.ok(backend.calls.every(call => call.method === "GET"), "opening menus/dialogs and canceling archive never writes");
+    view.state.busy = true;
+    assert.ok(view.state.workspaceMoreActions(workspace).flat().every(action => action.disabled));
+    assert.ok(view.state.projectMoreActions(view.state.projects[0]).flat().every(action => action.disabled));
+  } finally {
+    window.confirm = savedConfirm;
+    view.unmount();
+  }
+});
 async function scopedPage(project = true) { const view = mount(Scoped, { workspaceId, ...(project ? { projectId } : {}), session: scopedSession }); await flush(); assert.equal(view.state.loading, false); return view; }
 async function homepagePage() { const view = mount(Homepage); await flush(); assert.ok(view.state.draft.current); return view; }
 

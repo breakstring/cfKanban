@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { build } from "esbuild";
+import { mergePageById } from "../../apps/web/src/lib/pagination.ts";
 const built = await build({ entryPoints: [new URL("../../apps/web/src/lib/container-tree.ts", import.meta.url).pathname], bundle: true, write: false, format: "esm", platform: "node" });
 const { ContainerTree } = await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString("base64")}`);
 const page = (items, cursor = null) => ({ items, has_more: cursor !== null, next_cursor: cursor });
@@ -73,6 +74,102 @@ const casBuilt = await build({ entryPoints: [new URL("../../apps/web/src/lib/cas
 const cas = await import(`data:text/javascript;base64,${Buffer.from(casBuilt.outputFiles[0].text).toString("base64")}`);
 
 const stableId = index => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+const treeLoadDeclaration = ownerAst.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === "loadWorkspaceTree");
+assert.ok(treeLoadDeclaration);
+const treeLoadScript = ts.transpileModule(treeLoadDeclaration.getText(ownerAst), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+
+function ownerSourceTreeFixture({ query = `?section=workspaces&workspace=${stableId(21)}`, section = "workspaces", readTarget } = {}) {
+  const tree = new ContainerTree();
+  const resources = Array.from({ length: 21 }, (_, index) => ({ ...workspace(stableId(index + 1)), version: 1, allowed_actions: ["read"] }));
+  const requests = [], errors = [];
+  const fixture = {
+    containerTree: tree, resources, requests, errors, props: { section }, window: { location: { search: query } },
+    initialWorkspace: new URLSearchParams(query).get("workspace"), UUID_PATTERN: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    workspaces: { get value() { return tree.workspaces.active.items; }, set value(items) { tree.workspaces.active.items = items; } },
+    mergePageById, setError: error => errors.push(error),
+  };
+  fixture.apiRequest = async (path, options) => {
+    requests.push({ path, options });
+    const url = new URL(path, "https://local.test");
+    if (url.pathname === "/api/v1/workspaces") return url.searchParams.has("cursor") ? page(resources.slice(20)) : page(resources.slice(0, 20), "workspace-page-2");
+    if (url.pathname.endsWith("/projects")) return page([], url.pathname.includes(stableId(21)) ? "source-project-page-2" : null);
+    return readTarget ? readTarget(path, options, resources[20]) : resources[20];
+  };
+  fixture.fetchContainers = path => fixture.apiRequest(path);
+  const bindings = ["containerTree", "props", "window", "initialWorkspace", "UUID_PATTERN", "workspaces", "mergePageById", "setError", "apiRequest", "fetchContainers"];
+  fixture.methods = new Function("bindings", `const { ${bindings.join(",")} } = bindings; let workspaceTreeRequestId = 0; let ownerViewMounted = true; ${treeLoadScript}; return { loadWorkspaceTree, stop() { ownerViewMounted = false; containerTree.reset(); } };`)(fixture);
+  return fixture;
+}
+
+test("返回后页工作区只读准确目标并初始化首项目页，不改变列表 cursor 或排空分页", async () => {
+  const fixture = ownerSourceTreeFixture();
+  await fixture.methods.loadWorkspaceTree();
+  const targetId = stableId(21);
+  assert.equal(fixture.containerTree.workspaces.active.items.length, 21);
+  assert.equal(fixture.containerTree.workspaces.active.items.at(-1).id, targetId);
+  assert.equal(fixture.containerTree.workspaces.active.cursor, "workspace-page-2");
+  assert.equal(fixture.containerTree.projectPage(targetId, "active").cursor, "source-project-page-2");
+  assert.equal(fixture.requests.filter(({ path }) => path === `/api/v1/workspaces/${targetId}`).length, 1);
+  assert.equal(fixture.requests.filter(({ path }) => path.startsWith(`/api/v1/workspaces/${targetId}/projects`)).length, 1);
+  assert.ok(fixture.requests.every(({ path }) => !path.includes("cursor=")));
+  await fixture.containerTree.loadWorkspaces(fixture.fetchContainers, "active", false);
+  assert.equal(fixture.containerTree.workspaces.active.items.length, 21);
+  assert.equal(fixture.containerTree.workspaces.active.cursor, null);
+  assert.equal(fixture.requests.filter(({ path }) => path.startsWith(`/api/v1/workspaces/${targetId}/projects`)).length, 1);
+});
+
+test("来源在首工作区页、UUID 非法、参数重复或非当前列表时不额外读目标", async () => {
+  for (const options of [{ query: `?workspace=${stableId(1)}` }, { query: "?workspace=https://evil.invalid/" }, { query: `?workspace=${stableId(21)}&workspace=${stableId(21)}` }, { section: "access" }]) {
+    const fixture = ownerSourceTreeFixture(options);
+    await fixture.methods.loadWorkspaceTree(false);
+    assert.equal(fixture.containerTree.workspaces.active.items.length, 20);
+    assert.equal(fixture.requests.length, 21);
+    assert.ok(fixture.requests.every(({ path }) => path.includes("?limit=20")));
+  }
+});
+
+test("准确来源目标拒绝、归档、缺少 read 或 ID 不符时不加入列表或读取子项目", async () => {
+  for (const readTarget of [
+    () => { throw { status: 403 }; },
+    (_path, _options, target) => ({ ...target, deleted_at: "2026-10-09" }),
+    (_path, _options, target) => ({ ...target, allowed_actions: ["update"] }),
+    (_path, _options, target) => ({ ...target, id: stableId(30) }),
+  ]) {
+    const fixture = ownerSourceTreeFixture({ readTarget });
+    await fixture.methods.loadWorkspaceTree();
+    assert.equal(fixture.containerTree.workspaces.active.items.length, 20);
+    assert.equal(fixture.containerTree.workspaces.active.cursor, "workspace-page-2");
+    assert.equal(fixture.requests.length, 22);
+    assert.equal(fixture.containerTree.projects[`active:${stableId(21)}`], undefined);
+  }
+});
+
+test("返回来源准确读取的迟到响应不能复活已卸载页面或覆盖新读取", async () => {
+  let resolveOld;
+  const oldTarget = new Promise(resolve => { resolveOld = resolve; });
+  const fixture = ownerSourceTreeFixture({ readTarget: () => oldTarget });
+  const loading = fixture.methods.loadWorkspaceTree();
+  await until(() => fixture.requests.length === 22);
+  fixture.methods.stop();
+  resolveOld(fixture.resources[20]);
+  await loading;
+  assert.deepEqual(fixture.containerTree.workspaces.active.items, []);
+  assert.deepEqual(fixture.containerTree.projects, {});
+  assert.equal(fixture.requests.length, 22);
+
+  let resolveStale, reads = 0;
+  const staleTarget = new Promise(resolve => { resolveStale = resolve; });
+  const latest = ownerSourceTreeFixture({ readTarget: (_path, _options, target) => ++reads === 1 ? staleTarget : { ...target, display_name: "Fresh source", version: 2 } });
+  const stale = latest.methods.loadWorkspaceTree();
+  await until(() => reads === 1);
+  await latest.methods.loadWorkspaceTree();
+  resolveStale(latest.resources[20]);
+  await stale;
+  assert.equal(latest.containerTree.workspaces.active.items.at(-1).display_name, "Fresh source");
+  assert.equal(latest.containerTree.workspaces.active.items.at(-1).version, 2);
+  assert.equal(latest.requests.filter(({ path }) => path.startsWith(`/api/v1/workspaces/${stableId(21)}/projects`)).length, 1);
+});
+
 async function ownerRecoveryFixture(apiRequest) {
   const tree = new ContainerTree();
   const resources = Array.from({ length: 21 }, (_, index) => ({ id: stableId(index + 1), display_name: `Workspace ${index + 1}`, version: 1, deleted_at: null }));

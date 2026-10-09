@@ -10,7 +10,7 @@ Use $cfkanban-admin to archive <project name> in <workspace name> and verify the
 
 The Owner can archive Workspaces and Projects. A Workspace administrator can archive child Projects while the Workspace is active. Project administrators cannot archive their Project. Archiving a Workspace pauses data access and inherited management for all child Projects; archiving a Project pauses access to that Project.
 
-**In the Web UI:** The Owner chooses **Archive** for the exact target under **Administration → Workspaces & Projects**. Workspace administrators use the Project list or open **Project settings → Management** from the board. Content and permissions remain, while the archived project or workspace leaves the active list.
+**In the Web UI:** Under **Administration → Workspaces & Projects**, the Owner opens the exact target's more-actions menu and chooses **Archive workspace** or **Archive project**, then reviews and confirms the target. Workspace administrators use the Project list or open **Project settings → Management** from the board. Content and permissions remain, while the archived project or workspace leaves the active list.
 
 ## Restore access
 

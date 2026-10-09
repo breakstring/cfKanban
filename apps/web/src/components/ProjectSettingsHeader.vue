@@ -3,7 +3,7 @@ import UButton from "@nuxt/ui/components/Button.vue";
 import { computed } from "vue";
 import { boardReturnPath } from "../lib/board-navigation";
 import { locale } from "../lib/i18n";
-import { projectSettingsPath, projectSettingsSections, type ProjectSettingsSection } from "../lib/project-settings";
+import { ownerWorkspacesReturnPath, ownerWorkspacesReturnTarget, projectSettingsPath, projectSettingsSections, type ProjectSettingsSection } from "../lib/project-settings";
 import type { ContainerResource, WebSessionView } from "../types";
 
 const props = defineProps<{
@@ -19,6 +19,7 @@ const scope = computed(() => props.session.allowed_scope.projects?.find(item => 
 const backPath = computed(() => boardReturnPath(props.workspaceId, props.projectId, props.returnTo
   ? new URLSearchParams({ from: props.returnTo }).toString()
   : window.location.search));
+const ownerReturnPath = computed(() => ownerWorkspacesReturnPath(props.session, props.workspaceId, window.location.search));
 const projectName = computed(() => props.project?.display_name ?? scope.value?.project_display_name ?? "");
 const workspaceName = computed(() => props.project?.workspace_display_name ?? scope.value?.workspace_display_name ?? "");
 const sections = computed(() => projectSettingsSections(props.session, props.workspaceId, props.projectId, props.project));
@@ -34,13 +35,14 @@ function label(section: ProjectSettingsSection): string {
 }
 function open(section: ProjectSettingsSection): void {
   if (section === props.section || !sections.value.includes(section)) return;
-  emit("navigate", projectSettingsPath(props.workspaceId, props.projectId, section, backPath.value, props.project?.deleted_at != null));
+  emit("navigate", projectSettingsPath(props.workspaceId, props.projectId, section, backPath.value, props.project?.deleted_at != null,
+    ownerReturnPath.value ? ownerWorkspacesReturnTarget : undefined));
 }
 </script>
 
 <template>
   <header class="project-settings-header">
-    <UButton color="neutral" variant="ghost" type="button" class="project-settings-back" @click="emit('navigate', archived ? '/app' : backPath)">← {{ archived ? ui('Choose project', '选择项目') : ui('Back to board', '返回看板') }}</UButton>
+    <UButton color="neutral" variant="ghost" type="button" class="project-settings-back" @click="emit('navigate', ownerReturnPath ?? (archived ? '/app' : backPath))">← {{ ownerReturnPath ? ui('Back to management', '返回管理中心') : archived ? ui('Choose project', '选择项目') : ui('Back to board', '返回看板') }}</UButton>
     <div class="project-settings-heading">
       <div>
         <p v-if="projectName" class="eyebrow">{{ workspaceName ? `${workspaceName} / ` : '' }}{{ projectName }}</p>

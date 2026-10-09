@@ -11,7 +11,9 @@ Create Product first if it does not exist.
 
 Only the Owner can create a workspace. The Owner or a workspace administrator can create projects within that workspace; project administrators cannot create sibling projects. The Agent checks for existing workspaces and projects and resolves ambiguous names. Creating a project does not add ordinary members or tasks, or enable Public Join.
 
-**In the Web UI:** The Owner opens **Management center → Workspaces & Projects**, creates a Workspace, then creates a Project inside it with a name and optional notes. Workspace administrators open their Workspace management **Projects** section, enter **New project name**, and create it.
+**In the Web UI:** The Owner opens **Management center → Workspaces & Projects**, chooses **New workspace**, then **New project** on the relevant Workspace row, with a name and optional notes. Workspace administrators open their Workspace management **Projects** section, enter **New project name**, and create it.
+
+Expand a Workspace to browse its Projects. Choose a Project name to open its board, **Workspace settings** to open the Workspace management page's settings tab, or **Project settings** to open the full Project settings page. Workspace management also provides **Projects** and **Members and permissions** tabs. Project notes appear beneath the name. The row's more-actions menu holds less frequent actions: renaming or archiving a Workspace, and Public Join or archiving a Project. When settings were opened from this list, **Back to management** returns to the list with that Workspace expanded.
 
 ## Change names and Project notes
 
@@ -22,7 +24,7 @@ Rename DemoProject to Mobile and update its Project notes to:
 
 The Owner and workspace administrators can rename their workspace. Project administrators can also edit their project’s name and description. Renaming preserves issues and access.
 
-**In the Web UI:** The Owner changes the Workspace name under **Workspaces & Projects**, or opens a Project's **Settings** to edit its name and notes. Scoped administrators use **Workspace settings**, or the board’s **Project settings → Management → Settings** area. Project notes inform collaboration; they do not replace permissions or authorize additional Agent actions.
+**In the Web UI:** The Owner opens the Workspace's more-actions menu under **Workspaces & Projects → Rename workspace**, or uses **Project settings → Management → Settings** to edit a Project's name and notes. Scoped administrators use **Workspace settings**, or the board’s **Project settings → Management → Settings** area. Project notes inform collaboration; they do not replace permissions or authorize additional Agent actions.
 
 Internal Project notes are separate from the [Public Join summary](./public-join.md). Only publish information intended for all visitors; do not copy private context into a public introduction.
 
@@ -34,7 +36,7 @@ Change the display label of DemoProject's todo column to “Ready”, leaving th
 
 You need project management access. This changes the displayed column name while preserving the five statuses—Backlog, Todo, In Progress, Done, and Canceled—and their order.
 
-**In the Web UI:** The Owner uses Project **Settings → Board column names**. Scoped administrators open the board’s **Project settings → Management**, edit **Status names**, and save each label.
+**In the Web UI:** Open **Project settings → Management**, edit **Status names**, and save each label. The Owner can enter Project settings from **Workspaces & Projects**; scoped administrators enter from their authorized board.
 
 ## Common questions
 
