@@ -19,6 +19,8 @@ The Agent chooses an installation method supported by its host, reuses compatibl
 
 After installation, four Skills should be available: `cfkanban-howto` explains usage, `cfkanban` handles tasks, `cfkanban-admin` manages the application, and `cfkanban-deploy` handles installation, updates, and deployment. They do not grant business permissions. New members should continue with [Joining and signing in](../usage/access.md).
 
+Agents that support Skills Discovery can also discover these four Skills and versioned archives with their complete dependencies on this site. This entry describes **the version currently running here**, which may be an RC. Use the official stable guide above for a first installation, and explicitly select a version if you need an RC. Discovery or downloading does not automatically install, execute, update local Skills, or upgrade an instance; the Agent still verifies the official source and complete release artifacts.
+
 ### Skills already installed?
 
 If Skills already load but local components or connections are missing, tell the Agent:

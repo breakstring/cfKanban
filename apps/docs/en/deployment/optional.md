@@ -15,6 +15,12 @@ The plan verifies the same instance, preferred origin, and safe local connection
 
 WAF management has been removed from the Owner page and normal Agent/CLI setup. Upgrades preserve existing rules and ownership records; they do not install or delete rules. A legacy or manually configured custom domain can continue working without being recreated or taken over. An explicitly approved rollback of a tool-owned domain can remove only its verified, unchanged, tool-owned WAF rule under the original safety plan. It preserves the shared ruleset and other rules. Unknown earlier operations must be resolved from their original records before proceeding; missing records or similar rule names do not establish ownership.
 
+## Public pages and crawlers
+
+Each release provides an API catalog, Skills Discovery, `robots.txt`, and a public-page sitemap without requiring separate response-header rules. Discovery describes capabilities that exist; it does not expose private projects or change installation permissions.
+
+The default crawl scope is the homepage and bilingual public documentation; other pages remain disallowed. The sitemap follows the public documentation catalog. Robots rules do not replace authentication or authorization and do not grant permission for AI training. The Owner separately chooses Cloudflare Managed robots, permitted bots, and training policies. If the platform rewrites a response, verify the final online result against your selected policy; ordinary deployments and upgrades do not change those switches for you.
+
 ## Enable attachments
 
 ```text

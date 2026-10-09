@@ -294,6 +294,8 @@ test("Worker-first routing excludes public documentation assets and preserves a 
   const config = JSON.parse(await readFile(new URL("../../wrangler.jsonc", import.meta.url), "utf8"));
   assert.equal(config.assets.not_found_handling, "none");
   assert.deepEqual(config.assets.run_worker_first, [
-    "/api/*", "/healthz", "/openapi.json", "/invite", "/", "/app", "/app/*", "/llms.txt", "/docs", "/docs/*", "/.well-known/*", "!/docs/assets/*",
+    "/api/*", "/healthz", "/openapi.json", "/invite", "/", "/app", "/app/*", "/llms.txt",
+    "/robots.txt", "/robots.txt/*", "/sitemap.xml", "/sitemap.xml/*", "/agent-skills", "/agent-skills/*",
+    "/docs", "/docs/*", "/.well-known/*", "!/docs/assets/*",
   ]);
 });

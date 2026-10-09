@@ -11,6 +11,7 @@ import { verifyLocalRuntimeBuild } from "../packages/local-runtime/scripts/build
 import { verifyCliBuild } from "./lib/cli-build.mjs";
 import { verifyMcpBuild } from "./lib/mcp-build.mjs";
 import { generateBrandAssets } from "./generate-brand-assets.mjs";
+import { buildAgentSkillsDiscovery, verifyAgentSkillsDiscovery } from "./lib/agent-skills-discovery.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -50,6 +51,7 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
       "apps/web/src/assets/cfkanban-mark-orange.svg",
       "skills",
       "packages/skill-runtime",
+      "release/version.json",
       "docs/skills/README.md",
       "docs/skills/README.zh-CN.md",
     ], skillRoot);
@@ -74,7 +76,13 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
       "release/version.json",
       "wrangler.jsonc",
     ], serviceRoot);
+    const skillDiscovery = await buildAgentSkillsDiscovery({
+      skillBundleRoot: skillRoot,
+      outputDirectory: path.join(serviceRoot, "apps/web/dist"),
+      version,
+    });
     await verifyWebAssetManifest({ outputDirectory: path.join(serviceRoot, "apps/web/dist"), budget: webBudget });
+    await verifyAgentSkillsDiscovery({ outputDirectory: path.join(serviceRoot, "apps/web/dist"), version, skillBundleRoot: skillRoot });
     await mkdir(path.join(serviceRoot, "dist"), { recursive: true });
     await cp(path.join(repoRoot, "apps", "worker", "dist", "index.js"), path.join(serviceRoot, "dist", "index.js"));
     await cp(path.join(repoRoot, "apps", "worker", "dist", "index.js.map"), path.join(serviceRoot, "dist", "index.js.map"));
@@ -95,7 +103,7 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
     const servicePath = path.join(output, `cfkanban-service-${version}.zip`);
     const skill = await writeDeterministicZip({ root: skillRoot, outputPath: skillPath, prefix: `cfkanban-skills-${version}/` });
     const service = await writeDeterministicZip({ root: serviceRoot, outputPath: servicePath, prefix: `cfkanban-service-${version}/` });
-    return { skill, service };
+    return { skill, service, skill_discovery: skillDiscovery };
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

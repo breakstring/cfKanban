@@ -6,6 +6,8 @@ import { RELEASE_VERSION } from "./release-version.ts";
 
 import { clearCsrfCookie, clearSessionCookie } from "./kernel/csrf.ts";
 import { documentationResponse, isDocumentationPath } from "./kernel/docs.ts";
+import { homepageDiscoveryLink, publicDiscoveryResponse } from "./kernel/public-discovery.ts";
+import { agentSkillsDiscoveryResponse, isAgentSkillsDiscoveryPath } from "./kernel/agent-skills-discovery.ts";
 import { ApiError, errorResponse, notFound, platformUnavailable } from "./kernel/errors.ts";
 import {
   createRequestContext,
@@ -93,6 +95,11 @@ function withSpaDocumentHeaders(response: Response, requestId: string): Response
 export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Response> {
   const context = createRequestContext(request);
   try {
+    const discoveryResponse = publicDiscoveryResponse(request);
+    if (discoveryResponse) return withRequestId(discoveryResponse, context.requestId);
+    if (isAgentSkillsDiscoveryPath(context.url.pathname)) {
+      return withRequestId(await agentSkillsDiscoveryResponse(request, env), context.requestId);
+    }
     if (isDocumentationPath(context.url.pathname)) {
       return withRequestId(await documentationResponse(request, env), context.requestId);
     }
@@ -119,6 +126,12 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
       assetResponse = await env.ASSETS.fetch(new Request(shellUrl, { method: request.method }));
     }
     if (context.url.pathname === "/" || context.url.pathname === "/app" || context.url.pathname.startsWith("/app/")) {
+      if (context.url.pathname === "/" && (request.method === "GET" || request.method === "HEAD")
+        && assetResponse.status === 200 && /^text\/html(?:;|$)/iu.test(assetResponse.headers.get("content-type") ?? "")) {
+        const headers = new Headers(assetResponse.headers);
+        headers.append("link", homepageDiscoveryLink(request));
+        assetResponse = new Response(assetResponse.body, { headers, status: assetResponse.status, statusText: assetResponse.statusText });
+      }
       return withSpaDocumentHeaders(assetResponse, context.requestId);
     }
     return withRequestId(assetResponse, context.requestId);
