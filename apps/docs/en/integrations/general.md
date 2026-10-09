@@ -23,6 +23,8 @@ Agents that support Skills Discovery can also discover these four Skills and ver
 
 Agents can read this site's public documentation as Markdown from the same page URL. The homepage also offers a public product overview and links. Public content allows search and use as input to answers, and disallows model training; no Owner setting is needed. Reading these pages does not grant access to private projects or permission to execute their example requests.
 
+The site's <a href="/auth.md">Auth.md</a> explains how an Agent uses an existing API credential and obtains one through the supported invitation or Public Join workflow. It also links to browser sign-in and recovery guidance. Read this public guide before choosing the relevant workflow; reading it neither registers an identity nor redeems an invitation. An API credential authenticates your identity; project access still depends on its current permissions.
+
 ### Skills already installed?
 
 If Skills already load but local components or connections are missing, tell the Agent:

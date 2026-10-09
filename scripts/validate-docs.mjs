@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../apps/docs/", import.meta.url));
+// Worker 生成的公开文档没有静态源文件；其路由与正文由 Worker 测试校验。
+const generatedRootDocuments = new Set(["/auth.md"]);
 
 export async function validateDocs() {
   const catalog = JSON.parse(await readFile(path.join(root, "catalog.json"), "utf8"));
@@ -36,6 +38,7 @@ export async function validateDocs() {
       for (const match of source.matchAll(/\]\(([^\s)]+)(?:\s+"[^"]*")?\)/gu)) {
         const href = match[1];
         if (/^(?:https?:|mailto:|#)/u.test(href)) continue;
+        if (generatedRootDocuments.has(href)) continue;
         assert.ok(!href.startsWith("/"), `${file}: use relative documentation links so published Markdown also resolves beneath /docs/`);
         const pathname = href.split(/[?#]/u)[0];
         if (!pathname) continue;
@@ -52,6 +55,7 @@ export async function validateDocs() {
   for (const match of agentGuide.matchAll(/\]\(([^\s)]+)\)/gu)) {
     const href = match[1];
     if (/^https?:/u.test(href)) continue;
+    if (generatedRootDocuments.has(href)) continue;
     if (href === "/docs/llms.txt") continue; // 文档索引由构建脚本生成。
     assert.ok(href.startsWith("/"), `Root Agent guide must use same-instance paths: ${href}`);
     const target = href.startsWith("/docs/")

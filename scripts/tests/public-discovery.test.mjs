@@ -27,6 +27,7 @@ test("API catalog identifies its API context and publishes typed bilingual descr
   assert.deepEqual(api["service-doc"], [
     { href: `${origin}/docs/en/overview/`, type: "text/html", hreflang: ["en"] },
     { href: `${origin}/docs/zh-CN/overview/`, type: "text/html", hreflang: ["zh-CN"] },
+    { href: `${origin}/auth.md`, type: "text/markdown", hreflang: ["en", "zh-CN"] },
   ]);
   assert(!JSON.stringify(body).includes("principal"));
   assert(!JSON.stringify(body).includes("instance_id"));
@@ -78,7 +79,7 @@ function workerFixture({ status = 200, contentType = "text/html; charset=utf-8",
 
 test("Worker serves GET and HEAD discovery before D1, authentication, API rate limits or SPA assets", async () => {
   const fixture = workerFixture();
-  for (const path of ["/.well-known/api-catalog", "/robots.txt", "/sitemap.xml"]) {
+  for (const path of ["/.well-known/api-catalog", "/robots.txt", "/sitemap.xml", "/auth.md"]) {
     const get = await fixture.request(path, { headers: { authorization: "Bearer synthetic-test-value", cookie: "synthetic-session-cookie" } });
     const head = await fixture.request(path, { method: "HEAD" });
     assert.equal(get.status, 200, path);
@@ -99,7 +100,7 @@ test("all catalog href targets resolve to existing public resources without inve
   const catalogResponse = await fixture.request("/.well-known/api-catalog");
   const catalogBody = await catalogResponse.json();
   const targets = catalogBody.linkset.flatMap(context => Object.entries(context).flatMap(([name, links]) => name === "anchor" ? [] : links.map(link => link.href)));
-  assert.equal(targets.length, 3);
+  assert.equal(targets.length, 4);
   assert(!targets.includes(`${origin}/api/v1`));
   for (const target of targets) {
     const result = await fixture.request(new URL(target).pathname);
@@ -144,7 +145,7 @@ test("homepage Link is absent for other methods, non-HTML and non-200 responses"
 
 test("Worker keeps unknown discovery resources out of the SPA and retains normal app deep-link fallback", async () => {
   const fixture = workerFixture();
-  for (const path of ["/.well-known/api-catalog/unknown", "/robots.txt/unknown", "/sitemap.xml/unknown"]) {
+  for (const path of ["/.well-known/api-catalog/unknown", "/robots.txt/unknown", "/sitemap.xml/unknown", "/auth.md/unknown"]) {
     for (const method of ["GET", "HEAD"]) {
       const result = await fixture.request(path, { method });
       assert.equal(result.status, 404, path);
@@ -217,10 +218,10 @@ test("robots allows canonical public pages and denies private, exchange, removed
   assert.match(body, /^User-agent: \*\nContent-Signal: ai-train=no, search=yes, ai-input=yes\nDisallow: \/\n/u);
   assert.equal(result.headers.get("content-signal"), "ai-train=no, search=yes, ai-input=yes");
   assert.match(body, /Sitemap: https:\/\/discovery\.example\.test\/sitemap\.xml\n$/u);
-  for (const path of ["/", "/docs/en/overview/", "/docs/zh-CN/usage/milestones", "/docs/en/overview/quick-start", "/docs/zh-CN/usage/agents"]) {
+  for (const path of ["/", "/auth.md", "/docs/en/overview/", "/docs/zh-CN/usage/milestones", "/docs/en/overview/quick-start", "/docs/zh-CN/usage/agents"]) {
     assert.equal(robotsAllows(body, path), true, path);
   }
-  for (const path of ["/app", "/app/issues/CFK-1", "/api/v1/me", "/api/v1/invitations/redeem", "/launch", "/?capability=synthetic", "/docs/en/integrations/mcp", "/docs/en/unknown", "/docs/en/overview/unknown", "/not-a-page"]) {
+  for (const path of ["/auth.md/unknown", "/app", "/app/issues/CFK-1", "/api/v1/me", "/api/v1/invitations/redeem", "/launch", "/?capability=synthetic", "/docs/en/integrations/mcp", "/docs/en/unknown", "/docs/en/overview/unknown", "/not-a-page"]) {
     assert.equal(robotsAllows(body, path), false, path);
   }
   assert.equal(body.split("\n").filter(line => line.startsWith("Content-Signal:")).length, 1);
@@ -269,7 +270,7 @@ test("robots and sitemap HEAD retain GET metadata without a body and self-hosted
 });
 
 test("discovery only supports GET and HEAD, resource descendants return real 404 and unrelated routes remain available", async () => {
-  for (const path of ["/.well-known/api-catalog", "/robots.txt", "/sitemap.xml"]) for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+  for (const path of ["/.well-known/api-catalog", "/robots.txt", "/sitemap.xml", "/auth.md"]) for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
     const result = response(path, { method });
     assert.equal(result.status, 405, `${method} ${path}`);
     assert.equal(result.headers.get("allow"), "GET, HEAD");

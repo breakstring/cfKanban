@@ -1,15 +1,17 @@
 import catalog from "../../../docs/catalog.json" with { type: "json" };
 
+import { authenticationGuideBody } from "./auth-documentation.ts";
 import { HTML_DOCUMENT_CACHE_CONTROL } from "./http.ts";
 import { PUBLIC_CONTENT_SIGNAL } from "./public-content.ts";
 
 const API_CATALOG_PATH = "/.well-known/api-catalog";
 const API_CATALOG_PROFILE = "https://www.rfc-editor.org/info/rfc9727";
-const resourcePaths = [API_CATALOG_PATH, "/robots.txt", "/sitemap.xml"];
+const resourcePaths = [API_CATALOG_PATH, "/robots.txt", "/sitemap.xml", "/auth.md"];
 const publicDocumentPaths = [...new Set(catalog.flatMap(group => group.pages.flatMap(page => (
   ["en", "zh-CN"].map(locale => `/docs/${locale}/${page.path.replace(/\/index$/u, "/")}`)
 ))))];
-const crawlablePaths = ["/", ...publicDocumentPaths];
+const publicHtmlPaths = ["/", ...publicDocumentPaths];
+const crawlablePaths = [...publicHtmlPaths, "/auth.md"];
 
 function discoveryHeaders(contentType: string): Headers {
   return new Headers({
@@ -27,6 +29,7 @@ function publicApiLinks(origin: string): string[] {
     ...["en", "zh-CN"].map(locale => (
       `<${origin}/docs/${locale}/overview/>; rel="service-doc"; type="text/html"; hreflang="${locale}"; anchor="${anchor}"`
     )),
+    `<${origin}/auth.md>; rel="service-doc"; type="text/markdown"; anchor="${anchor}"`,
   ];
 }
 
@@ -45,9 +48,12 @@ function catalogBody(origin: string): string {
       {
         anchor: api,
         "service-desc": [{ href: `${origin}/openapi.json`, type: "application/json" }],
-        "service-doc": ["en", "zh-CN"].map(locale => ({
-          href: `${origin}/docs/${locale}/overview/`, type: "text/html", hreflang: [locale],
-        })),
+        "service-doc": [
+          ...["en", "zh-CN"].map(locale => ({
+            href: `${origin}/docs/${locale}/overview/`, type: "text/html", hreflang: [locale],
+          })),
+          { href: `${origin}/auth.md`, type: "text/markdown", hreflang: ["en", "zh-CN"] },
+        ],
       },
     ],
   });
@@ -76,7 +82,7 @@ function sitemapBody(origin: string): string {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-    ...crawlablePaths.map(path => `  <url><loc>${xmlText(new URL(path, origin).href)}</loc></url>`),
+    ...publicHtmlPaths.map(path => `  <url><loc>${xmlText(new URL(path, origin).href)}</loc></url>`),
     "</urlset>",
     "",
   ].join("\n");
@@ -108,6 +114,10 @@ export function publicDiscoveryResponse(request: Request): Response | null {
     headers = discoveryHeaders("text/plain; charset=utf-8");
     headers.set("content-signal", PUBLIC_CONTENT_SIGNAL);
     body = robotsBody(url.origin);
+  } else if (url.pathname === "/auth.md") {
+    headers = discoveryHeaders("text/markdown; charset=utf-8");
+    headers.set("content-signal", PUBLIC_CONTENT_SIGNAL);
+    body = authenticationGuideBody(url.origin);
   } else {
     headers = discoveryHeaders("application/xml; charset=utf-8");
     body = sitemapBody(url.origin);

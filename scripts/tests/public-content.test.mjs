@@ -115,7 +115,7 @@ test("homepage Markdown links derive from Request.url.origin and do not trust fo
   }), env);
   const body = await response.text();
   const links = [...body.matchAll(/\]\(([^)]+)\)/gu)].map(match => match[1]);
-  const localPaths = ["/docs/en/overview/", "/docs/en/usage/access", "/app", "/docs/zh-CN/overview/", "/docs/zh-CN/usage/access", "/.well-known/api-catalog", "/openapi.json", "/.well-known/agent-skills/index.json", "/llms.txt"];
+  const localPaths = ["/docs/en/overview/", "/docs/en/usage/access", "/app", "/docs/zh-CN/overview/", "/docs/zh-CN/usage/access", "/auth.md", "/.well-known/api-catalog", "/openapi.json", "/.well-known/agent-skills/index.json", "/llms.txt"];
   for (const path of localPaths) assert(links.includes(`${selfOrigin}${path}`), path);
   const external = links.filter(link => new URL(link).origin !== selfOrigin);
   assert.deepEqual(external, [

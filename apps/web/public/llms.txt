@@ -63,6 +63,7 @@ Agents, Web, and supported CLI commands use the same Service permissions and bus
 All links beginning with `/` refer to the same instance that served this file. Its documentation ships with its Service release; use the installed release's supported capabilities.
 
 - [Full bilingual documentation index](/docs/llms.txt): discover Markdown pages by topic.
+- [Auth.md](/auth.md): existing API credential authentication, invitation or Public Join provisioning, browser sign-in, and identity recovery; reading does not register an identity or grant access.
 - [Start here (English)](/docs/en/overview/index.md) / [开始使用（简体中文）](/docs/zh-CN/overview/index.md)
 - [Agent integrations (English)](/docs/en/integrations/index.md) / [Agent 接入（简体中文）](/docs/zh-CN/integrations/index.md)
 - [Daily collaboration (English)](/docs/en/usage/index.md) / [日常协作（简体中文）](/docs/zh-CN/usage/index.md)
