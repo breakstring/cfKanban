@@ -77,7 +77,10 @@ function onKeydown(event: KeyboardEvent): void {
 
 <template>
   <details ref="menu" class="milestone-select" @toggle="opened" @keydown="onKeydown">
-    <summary :aria-disabled="disabled" :aria-label="`${ui('Milestone', '里程碑')} · ${selectionLabel}`" :title="selectionLabel" @click="disabled && $event.preventDefault()"><template v-if="!hideLabel">{{ ui("Milestone", "里程碑") }} · </template>{{ selectionLabel }}</summary>
+    <summary :aria-disabled="disabled" :aria-label="`${ui('Milestone', '里程碑')} · ${selectionLabel}`" :title="selectionLabel" @click="disabled && $event.preventDefault()">
+      <span class="milestone-selection-label"><template v-if="!hideLabel">{{ ui("Milestone", "里程碑") }} · </template>{{ selectionLabel }}</span>
+      <svg class="milestone-select-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+    </summary>
     <div class="milestone-options" :aria-label="ui('Choose milestone', '选择里程碑')">
       <button v-if="allowAny" type="button" :disabled="disabled" :aria-pressed="value === 'all'" @click="select('all')">{{ ui('Any milestone', '不限里程碑') }}</button>
       <button type="button" :disabled="disabled" :aria-pressed="value === 'none'" @click="select('none')">{{ ui('No milestone', '不归属里程碑') }}</button>
@@ -94,8 +97,12 @@ function onKeydown(event: KeyboardEvent): void {
 
 <style scoped>
 .milestone-select { position: relative; min-width: 160px; max-width: 100%; }
-summary { min-height: 36px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-muted); background: var(--color-surface); font-size: 13px; cursor: pointer; overflow-wrap: anywhere; }
+summary { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-muted); background: var(--color-surface); font-size: 13px; cursor: pointer; list-style: none; }
+summary::-webkit-details-marker { display: none; }
 summary[aria-disabled="true"] { opacity: .6; cursor: default; }
+.milestone-selection-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.milestone-select-chevron { flex: none; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.milestone-select[open] .milestone-select-chevron { transform: rotate(180deg); }
 .milestone-options { position: absolute; z-index: 15; top: calc(100% + 4px); left: 0; display: grid; gap: 4px; min-width: 240px; max-width: min(360px, 82vw); max-height: 320px; overflow: auto; padding: 8px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); box-shadow: 0 4px 12px #00000012; }
 .milestone-options > button { min-height: 36px; padding: 8px; border: 0; border-radius: 6px; text-align: left; color: var(--color-text); background: transparent; cursor: pointer; overflow-wrap: anywhere; }
 .milestone-options > button[aria-pressed="true"] { background: var(--color-surface-muted); color: var(--color-primary); }

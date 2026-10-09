@@ -1144,8 +1144,8 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
 .editor-panel { padding: 20px; border: 1px solid var(--color-border); border-radius: 12px; }
 .relation-row { min-width: 0; justify-content: flex-start; }
 .issue-milestone-select { min-width: 0; }
-.issue-milestone-select :deep(summary) { min-height: 32px; padding: 6px 3px; border: 0; border-radius: 6px; color: var(--ui-text); background: transparent; }
-.issue-milestone-select :deep(summary:hover:not([aria-disabled="true"])) { background: var(--ui-bg-muted); }
+.issue-milestone-select :deep(summary) { display: inline-flex; max-width: 100%; min-height: 32px; padding: 4px 3px; border: 0; border-radius: 6px; color: var(--ui-text-muted); background: transparent; font-size: 12px; }
+.issue-milestone-select :deep(summary:hover:not([aria-disabled="true"])), .issue-milestone-select[open] :deep(summary) { background: var(--ui-bg-muted); color: var(--ui-text); }
 .issue-milestone-select :deep(summary:focus-visible) { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
 .issue-milestone-select :deep(.milestone-options) { left: auto; right: 0; min-width: min(240px, calc(100vw - 48px)); max-width: min(360px, calc(100vw - 48px)); }
 @media (max-width: 940px) {

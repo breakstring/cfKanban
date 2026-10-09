@@ -817,8 +817,8 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
             <button type="button" class="board-view-label board-view-inactive" :disabled="saving.size > 0 || hasPendingWrites" @click="openMilestones">{{ locale === 'zh-CN' ? '里程碑' : 'Milestones' }}</button>
           </div>
         </div>
+        <ProjectSearch v-model="search" :issues="searchIssues" :project-id="projectId" :applied-search="appliedSearch" :disabled="loading || saving.size > 0 || hasPendingWrites" :reset-key="`${workspaceId}:${projectId}:${session.principal.id}:${session.session_id}`" @search="submitProjectSearch" @open="openListIssue" />
         <div class="board-filter-controls" role="group" :aria-label="locale === 'zh-CN' ? '事项筛选' : 'Issue filters'">
-          <ProjectSearch v-model="search" :issues="searchIssues" :project-id="projectId" :applied-search="appliedSearch" :disabled="loading || saving.size > 0 || hasPendingWrites" :reset-key="`${workspaceId}:${projectId}:${session.principal.id}:${session.session_id}`" @search="submitProjectSearch" @open="openListIssue" />
           <USelect :model-value="selectedStatus ?? 'all'" :items="statusFilterItems" :aria-label="t('issue.status')" :disabled="loading || saving.size > 0 || hasPendingWrites" @update:model-value="changeStatusFilter" />
           <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || hasPendingWrites" />
           <MilestoneSelect v-if="project" v-model:value="selectedMilestone" :workspace-id="workspaceId" :project-id="projectId" :reset-key="`${session.session_id}:${role}`" allow-any :disabled="loading || saving.size > 0 || hasPendingWrites" />
@@ -969,7 +969,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 
 <style scoped>
 .board-page--nuxt { padding: 16px 28px 18px; }
-.board-toolbar { gap: 12px 16px; margin-bottom: 12px; }
+.board-toolbar { container: project-toolbar / inline-size; gap: 12px 16px; margin-bottom: 12px; }
 .board-title { min-width: 0; }
 .board-heading-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
 .board-title h1 { font-family: var(--font-ui); font-size: 24px; font-weight: 650; line-height: 1.35; letter-spacing: -.02em; }
@@ -979,14 +979,15 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 .board-description :deep(.markdown > :first-child) { margin-top: 0; }
 .board-description :deep(.markdown > :last-child) { margin-bottom: 0; }
 .ui-action-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.board-view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
-.board-filter-controls { display: flex; flex: 1 1 700px; min-width: 0; margin-left: auto; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 16px; }
+.board-view-controls { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.board-utility-bar > :deep(.project-search) { width: 100%; justify-self: center; }
+.board-filter-controls { display: flex; min-width: 0; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 12px; }
 .board-filter-controls :deep(.issue-query-filters--compact) { margin-left: 0; }
 .board-filter-controls :deep(.milestone-options) { left: auto; right: 0; }
 .board-view-bar { display: flex; flex: none; align-items: center; gap: 16px; }
 .board-view-label { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 0; border: 0; border-bottom: 2px solid var(--color-primary); background: transparent; color: var(--color-primary); font-size: 14px; font-weight: 600; cursor: pointer; }
 .board-view-inactive { border-bottom-color: transparent; color: var(--color-text-muted); font-weight: 400; }
-.board-utility-bar { justify-content: flex-start; flex-wrap: wrap; gap: 8px 16px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+.board-utility-bar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 560px) minmax(0, 1fr); gap: 10px 32px; padding-top: 12px; border-top: 1px solid var(--color-border); }
 .kanban-board { grid-template-columns: repeat(5, minmax(248px, 1fr)); min-width: 1304px; border-top: 0; gap: 16px; }
 .kanban-column { border-radius: 12px; padding: 8px; background: var(--color-surface-muted); }
 .column-header { min-height: 44px; justify-content: flex-start; gap: 8px; padding: 0 8px 6px; }
@@ -1011,6 +1012,18 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 .card-status-select { flex: 0 1 auto; max-width: 54%; padding: 4px 2px; min-height: 32px; font-size: 12px; text-align: right; }
 .column-empty { padding: 16px 8px; border-top: 0; color: var(--color-text-muted); font-size: 12px; }
 .form-stack :deep(.relative), .form-grid :deep(.relative) { width: 100%; }
+@container project-toolbar (max-width: 1599px) {
+  .board-filter-controls { grid-column: 1 / -1; }
+}
+@container project-toolbar (max-width: 1199px) {
+  .board-utility-bar { grid-template-columns: max-content minmax(0, 1fr); gap: 10px 24px; }
+  .board-utility-bar > :deep(.project-search) { justify-self: end; }
+}
+@container project-toolbar (max-width: 760px) {
+  .board-utility-bar { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .board-filter-controls { justify-content: flex-start; }
+  .board-filter-controls :deep(.milestone-options) { left: 0; right: auto; }
+}
 @media (max-width: 940px) {
   .board-page--nuxt { padding: 12px 16px; }
   .board-toolbar-actions :deep(button), .board-view-label, .board-utility-bar :deep(button), .board-utility-bar :deep(summary), .card-status-select, .issue-card-open { min-height: 44px; }
@@ -1019,8 +1032,6 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
   .board-toolbar { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .board-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; }
   .board-title h1 { font-size: 22px; }
-  .board-filter-controls { flex-basis: 100%; margin-left: 0; justify-content: flex-start; }
-  .board-filter-controls :deep(.milestone-options) { left: 0; right: auto; }
   .kanban-board { grid-template-columns: repeat(5, minmax(260px, 1fr)); min-width: 1364px; }
   .card-status-select { min-height: 44px; }
 }

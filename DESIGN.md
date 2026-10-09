@@ -1,9 +1,9 @@
 ---
 name: cfKanban
 status: frozen
-revision: 12
+revision: 13
 frozen_on: 2026-08-29
-revised_on: 2026-10-08
+revised_on: 2026-10-09
 selected_direction: nuxt-ui-kanban-workbench
 applies_to:
   - first-party-web-ui
@@ -174,7 +174,7 @@ Use system fonts only so the Worker serves no third-party font dependency. Icons
 
 - Use a full-width application surface with a compact top bar and a quiet project header.
 - Group the Workspace scope label and Project title on a compact heading line, with the primary `New issue` action and secondary `Project settings` action alongside. The project description stays directly below the heading and occupies at most three text lines; longer Markdown remains available in its keyboard-focusable scrolling region. Use 16px desktop top padding and 12px between heading and utilities rather than a separate tall title block.
-- Board/List switches, search, status and compact priority/label menus share one utility row when space permits, wrapping at narrower widths. Do not reserve a separate full-width tab row. Search retains an explicit submit control in addition to Enter; its scope explanation remains available to assistive technology, and quick-match feedback appears in the search popup without moving the Issue area. Filter selections apply immediately after a short debounce. Project settings remains the single project-level entry; do not repeat separate management, labels, activity, or deleted-Issue buttons on the Board. This compact hierarchy follows the user's 2026-10-08 review of wasted header space in the Board and List.
+- Board/List/Milestones switches, search, status and compact filter menus share one utility row when space permits: views align left, the search input and submit button form a centered group, and filters align right with clear space between groups. At narrower widths, move groups onto separate rows before they overlap or compress controls. Do not reserve a separate full-width tab row. Search retains an explicit submit control in addition to Enter; its scope explanation remains available to assistive technology, and quick-match feedback appears in the search popup without moving the Issue area. Filter selections apply immediately after a short debounce. Project settings remains the single project-level entry; do not repeat separate management, labels, activity, or deleted-Issue buttons on the Board. This compact hierarchy follows the user's 2026-10-08 and 2026-10-09 layout feedback.
 - The local workbench shares the same density goal while retaining its own shell: project view controls join the compact brand/project/action header at wide widths and wrap naturally at narrow widths. Constrained project headers may use icon triggers for Filters and host expansion, retaining their full accessible names and tooltips; selected filter counts remain visible. Keep filters available on demand, status shortcuts and the localized sideways-scroll hint visible, and touch controls at their existing accessible sizes. Do not reserve full-Web project-description space in this surface.
 - Do not add a persistent left sidebar to the default Board. Workspace/Project scope, search, and the single primary `New issue` action fit in the top region; identity details and account actions stay in the account menu, alongside an independent language switch.
 - At a 1440px desktop viewport, all five fixed columns should be visible without reducing card text below the typography rules.
