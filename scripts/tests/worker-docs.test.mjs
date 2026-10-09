@@ -26,7 +26,7 @@ test("documentation headers accept VitePress local search chunks without permitt
   }
 });
 
-function fixture({ missing = [], appFallback = [], missingResponse = "spa" } = {}) {
+function fixture({ missing = [], appFallback = [], missingResponse = "spa", assetHeaders = {} } = {}) {
   const files = new Map([
     ["/llms.txt", { body: "# cfKanban\nAgent getting started / Agent 入门", type: "text/plain" }],
     ["/docs/", { body: docsHtml("Choose your language"), type: "text/html; charset=utf-8" }],
@@ -56,10 +56,10 @@ function fixture({ missing = [], appFallback = [], missingResponse = "spa" } = {
     ASSETS: {
       async fetch(request) {
         const path = new URL(request.url).pathname;
-        requests.push({ path, method: request.method, headers: request.headers });
+        requests.push({ path, url: request.url, method: request.method, headers: request.headers });
         const file = files.get(path);
         if (file) return new Response(request.method === "HEAD" ? null : file.body, {
-          headers: { "content-type": file.type, "cache-control": "public, max-age=0, must-revalidate" },
+          headers: { "content-type": file.type, "cache-control": "public, max-age=0, must-revalidate", "content-length": String(Buffer.byteLength(file.body)), ...assetHeaders },
         });
         if (path.endsWith(".html")) {
           return new Response(null, { status: 308, headers: { location: path.slice(0, -5) } });
@@ -191,6 +191,95 @@ test("Markdown and discovery text are readable UTF-8 and never cached", async ()
   assert.equal(hashmap.headers.get("content-type"), "application/json; charset=utf-8");
   assertDocumentHeaders(hashmap);
   assert.deepEqual(await hashmap.json(), { "en_overview_index.md": "fingerprint" });
+});
+
+test("all canonical catalog pages negotiate their existing Markdown source without forwarding credentials", async () => {
+  const { request, requests } = fixture({ assetHeaders: { vary: "Accept-Encoding" } });
+  for (const locale of ["en", "zh-CN"]) {
+    for (const group of catalog) {
+      for (const page of group.pages) {
+        const canonical = `/docs/${locale}/${page.path.replace(/\/index$/u, "/")}`;
+        const response = await request(`${canonical}?search=example`, {
+          headers: { accept: "text/markdown", cookie: "synthetic-session-cookie", authorization: "Bearer synthetic-test-value" },
+        });
+        assert.equal(response.status, 200, canonical);
+        assert.equal(response.headers.get("content-type"), "text/markdown; charset=utf-8", canonical);
+        assert.equal(response.headers.get("vary"), "Accept-Encoding, Accept", canonical);
+        assert.equal(await response.text(), `# ${page[locale]}\n`, canonical);
+        assertDocumentHeaders(response);
+        assert.equal(requests.at(-1).path, `/docs/${locale}/${page.path}.md`);
+      }
+    }
+  }
+  assert.ok(requests.every(({ method, headers, url }) => method === "GET" && [...headers].length === 0 && !new URL(url).search));
+});
+
+test("HTML and Markdown negotiate on canonical URLs while aliases and explicit source URLs keep their contracts", async () => {
+  const { request, requests } = fixture();
+  const path = "/docs/en/usage/issues";
+  for (const accept of [undefined, "*/*", "text/markdown;q=0,text/*;q=1", "text/markdown,text/html", "text/markdown;q=0.4,text/html;q=0.8"]) {
+    const response = await request(path, { headers: accept ? { accept } : {} });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type"), /^text\/html/);
+    assert.equal(response.headers.get("vary"), "Accept");
+    assert.match(await response.text(), /name="cfkanban-docs"/);
+    assert.equal(requests.at(-1).path, path);
+  }
+  const redirect = await request("/docs/en/usage/issues.html", { headers: { accept: "text/markdown" } });
+  assert.equal(redirect.status, 308);
+  assert.equal(redirect.headers.get("location"), path);
+  const explicit = await request(`${path}.md`, { headers: { accept: "text/html" } });
+  assert.equal(explicit.status, 200);
+  assert.equal(explicit.headers.get("content-type"), "text/plain; charset=utf-8");
+  assert.match(await explicit.text(), /^# /);
+});
+
+test("documentation language chooser has a Markdown representation from the built bilingual index", async () => {
+  const { request, requests } = fixture();
+  const response = await request("/docs/", { headers: { accept: "text/markdown" } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/markdown; charset=utf-8");
+  assert.equal(response.headers.get("vary"), "Accept");
+  assert.equal(await response.text(), "# cfKanban docs");
+  assert.equal(requests.at(-1).path, "/docs/llms.txt");
+});
+
+test("negotiated Markdown HEAD uses the same verified source and headers as GET without a body", async () => {
+  const { request, requests } = fixture({ assetHeaders: { vary: "Accept-Encoding", etag: '"source-representation"' } });
+  for (const path of ["/docs/", "/docs/zh-CN/overview/", "/docs/en/usage/issues"]) {
+    const headers = { accept: "text/markdown" };
+    const get = await request(path, { headers });
+    const head = await request(path, { method: "HEAD", headers });
+    assert.equal(head.status, get.status, path);
+    for (const name of ["content-type", "cache-control", "vary", "content-length", "etag", "referrer-policy", "x-content-type-options"]) {
+      assert.equal(head.headers.get(name), get.headers.get(name), `${path}: ${name}`);
+    }
+    assert.equal(Number(head.headers.get("content-length")), Buffer.byteLength(await get.text()));
+    assert.equal(await head.text(), "");
+  }
+  assert.ok(requests.every(({ method }) => method === "GET"));
+});
+
+test("missing negotiated Markdown fails closed rather than falling back to HTML or the SPA", async () => {
+  for (const missingResponse of ["spa", "404"]) {
+    const { request, requests } = fixture({ missingResponse, missing: ["/docs/en/usage/issues.md", "/docs/llms.txt"] });
+    for (const path of ["/docs/en/usage/issues", "/docs/"]) {
+      for (const method of ["GET", "HEAD"]) {
+        const response = await request(path, { method, headers: { accept: "text/markdown" } });
+        assert.equal(response.status, 404, `${method} ${path}`);
+        assert.equal(response.headers.get("vary"), "Accept");
+        assert.equal(response.headers.get("content-type"), "text/plain; charset=utf-8");
+        assert.equal(await response.text(), method === "HEAD" ? "" : "Not Found");
+        assertDocumentHeaders(response);
+      }
+    }
+    assert.ok(requests.every(({ path }) => path === "/docs/en/usage/issues.md" || path === "/docs/llms.txt"));
+  }
+  const { request } = fixture({ appFallback: ["/docs/en/usage/issues.md"] });
+  assert.equal((await request("/docs/en/usage/issues", { headers: { accept: "text/markdown" } })).status, 404);
+  const unknown = await request("/docs/en/usage/unlisted", { headers: { accept: "text/markdown" } });
+  assert.equal(unknown.status, 404);
+  assert.match(await unknown.text(), /Documentation not found/);
 });
 
 test("fingerprinted documentation assets cache immutably while ordinary assets remain fresh", async () => {

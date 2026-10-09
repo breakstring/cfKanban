@@ -1,9 +1,11 @@
 import catalog from "../../../docs/catalog.json" with { type: "json" };
 
+import { addAcceptVary, prefersMarkdown } from "./content-negotiation.ts";
 import { HTML_DOCUMENT_CACHE_CONTROL } from "./http.ts";
 import type { WorkerEnv } from "./types.ts";
 
 const documentPaths = new Set(["/docs/"]);
+const documentMarkdownPaths = new Map([["/docs/", "/docs/llms.txt"]]);
 const markdownPaths = new Set<string>();
 const redirects = new Map([
   ["/docs", "/docs/"],
@@ -19,6 +21,7 @@ for (const locale of ["en", "zh-CN"]) {
       const isIndex = page.path.endsWith("/index");
       const path = isIndex ? sourcePath.slice(0, -"index".length) : sourcePath;
       documentPaths.add(path);
+      documentMarkdownPaths.set(path, `${sourcePath}.md`);
       markdownPaths.add(`${sourcePath}.md`);
       if (isIndex) {
         redirects.set(path.slice(0, -1), path);
@@ -32,16 +35,17 @@ for (const locale of ["en", "zh-CN"]) {
   }
 }
 
-function documentHeaders(headers?: HeadersInit): Headers {
+function documentHeaders(headers?: HeadersInit, negotiated = false): Headers {
   const result = new Headers(headers);
   result.set("cache-control", HTML_DOCUMENT_CACHE_CONTROL);
   result.set("referrer-policy", "no-referrer");
   result.set("x-content-type-options", "nosniff");
+  if (negotiated) addAcceptVary(result);
   return result;
 }
 
-function plainResponse(request: Request, status = 404): Response {
-  const headers = documentHeaders({ "content-type": "text/plain; charset=utf-8" });
+function plainResponse(request: Request, status = 404, negotiated = false): Response {
+  const headers = documentHeaders({ "content-type": "text/plain; charset=utf-8" }, negotiated);
   if (status === 405) headers.set("allow", "GET, HEAD");
   return new Response(request.method === "HEAD" ? null : status === 405 ? "Method Not Allowed" : "Not Found", {
     headers,
@@ -67,14 +71,25 @@ async function fetchDocument(request: Request, env: WorkerEnv, path: string, sta
   if (response.status !== 200 || !isHtml(response)) return null;
   const body = await response.text();
   if (!/<meta\s+[^>]*name=["']cfkanban-docs["'][^>]*>/i.test(body)) return null;
-  const headers = documentHeaders(response.headers);
+  const headers = documentHeaders(response.headers, true);
   headers.delete("content-length");
   headers.delete("content-encoding");
   return new Response(request.method === "HEAD" ? null : body, { headers, status });
 }
 
 async function notFoundDocument(request: Request, env: WorkerEnv): Promise<Response> {
-  return await fetchDocument(request, env, "/docs/404", 404) ?? plainResponse(request);
+  return await fetchDocument(request, env, "/docs/404", 404) ?? plainResponse(request, 404, true);
+}
+
+async function fetchMarkdownDocument(request: Request, env: WorkerEnv, path: string): Promise<Response> {
+  // Read the existing source representation; GET verifies the media type even for an outgoing HEAD.
+  const response = await env.ASSETS.fetch(assetRequest(request, path, "GET"));
+  if (response.status !== 200 || !/^text\/(?:plain|markdown)(?:;|$)/i.test(response.headers.get("content-type") ?? "")) {
+    return plainResponse(request, 404, true);
+  }
+  const headers = documentHeaders(response.headers, true);
+  headers.set("content-type", "text/markdown; charset=utf-8");
+  return new Response(request.method === "HEAD" ? null : response.body, { headers });
 }
 
 export function isDocumentationPath(path: string): boolean {
@@ -92,6 +107,9 @@ export async function documentationResponse(request: Request, env: WorkerEnv): P
     });
   }
   if (documentPaths.has(path)) {
+    if (prefersMarkdown(request.headers.get("accept"))) {
+      return await fetchMarkdownDocument(request, env, documentMarkdownPaths.get(path)!);
+    }
     return await fetchDocument(request, env, path, 200) ?? notFoundDocument(request, env);
   }
 

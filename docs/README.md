@@ -64,7 +64,7 @@
 | --- | --- |
 | Owner 可编辑的公开首页说明与缺省文案 | [首页实例说明设置](specs/2026-09-20-homepage-settings-spec.md) |
 | 公开文档、双语手册、Agent 示例与静态打包 | [站内双语文档中心](specs/2026-09-29-documentation-center-spec.md) |
-| API Catalog、Skills 发现归档、robots 与公开 sitemap | [公开发现](specs/2026-10-09-public-discovery-spec.md) |
+| API Catalog、Skills 发现归档、robots / sitemap、Content Signals 与 Markdown 协商 | [公开发现与 Agent 阅读](specs/2026-10-09-public-discovery-spec.md) |
 | stable 发现、发行版本、工件与更新 | [正式发行生命周期](specs/2026-09-20-stable-release-lifecycle-spec.md) |
 | Owner 站内版本发现与更新指引 | [版本与更新](specs/2026-10-06-owner-release-updates-spec.md) |
 | 成功升级后可配置自动公告 | [升级通知](specs/2026-10-06-instance-upgrade-notifications-spec.md) |

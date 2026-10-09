@@ -118,6 +118,8 @@ test("homepage discovery Link preserves existing headers and body for real GET a
     assert.equal(result.headers.get("x-content-type-options"), "nosniff");
     assert.equal(result.headers.get("cache-control"), "no-store, no-transform");
     assert.equal(result.headers.get("referrer-policy"), "no-referrer");
+    assert.equal(result.headers.get("content-signal"), "ai-train=no, search=yes, ai-input=yes");
+    assert.equal(result.headers.get("vary"), "Accept");
     assert.ok(result.headers.get("x-request-id"));
     assert.match(result.headers.get("link"), /rel="canonical"/u);
     assert.match(result.headers.get("link"), /rel="api-catalog"/u);
@@ -134,7 +136,10 @@ test("homepage Link is absent for other methods, non-HTML and non-200 responses"
     assert.doesNotMatch(result.headers.get("link"), /api-catalog/u);
   }
   const result = await workerFixture().request("/", { method: "POST" });
-  assert.doesNotMatch(result.headers.get("link"), /api-catalog/u);
+  assert.equal(result.status, 405);
+  assert.equal(result.headers.get("allow"), "GET, HEAD");
+  assert.equal(result.headers.get("link"), null);
+  assert.equal(result.headers.get("content-signal"), null);
 });
 
 test("Worker keeps unknown discovery resources out of the SPA and retains normal app deep-link fallback", async () => {
@@ -209,7 +214,8 @@ test("robots allows canonical public pages and denies private, exchange, removed
   const result = response("/robots.txt");
   assertHeaders(result, /^text\/plain; charset=utf-8$/u);
   const body = await result.text();
-  assert.match(body, /^User-agent: \*\nDisallow: \/\n/u);
+  assert.match(body, /^User-agent: \*\nContent-Signal: ai-train=no, search=yes, ai-input=yes\nDisallow: \/\n/u);
+  assert.equal(result.headers.get("content-signal"), "ai-train=no, search=yes, ai-input=yes");
   assert.match(body, /Sitemap: https:\/\/discovery\.example\.test\/sitemap\.xml\n$/u);
   for (const path of ["/", "/docs/en/overview/", "/docs/zh-CN/usage/milestones", "/docs/en/overview/quick-start", "/docs/zh-CN/usage/agents"]) {
     assert.equal(robotsAllows(body, path), true, path);
@@ -217,7 +223,7 @@ test("robots allows canonical public pages and denies private, exchange, removed
   for (const path of ["/app", "/app/issues/CFK-1", "/api/v1/me", "/api/v1/invitations/redeem", "/launch", "/?capability=synthetic", "/docs/en/integrations/mcp", "/docs/en/unknown", "/docs/en/overview/unknown", "/not-a-page"]) {
     assert.equal(robotsAllows(body, path), false, path);
   }
-  assert(!body.includes("ai-train"));
+  assert.equal(body.split("\n").filter(line => line.startsWith("Content-Signal:")).length, 1);
   assert(!body.includes("GPTBot"));
 });
 

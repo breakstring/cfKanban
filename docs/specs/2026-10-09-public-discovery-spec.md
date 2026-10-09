@@ -1,8 +1,8 @@
-# 公开 API、Skills 与页面发现
+# 公开 API、Skills、页面发现与 Agent 阅读
 
 - 状态：Frozen
 - 日期：2026-10-09
-- 授权依据：用户要求完成 CFK-720、CFK-721、CFK-725，并在检查通过后发布下一 RC、升级既有线上实例。
+- 授权依据：用户要求完成 CFK-720、CFK-721、CFK-725，并在检查通过后发布下一 RC、升级既有线上实例；随后授权实现 Content Signals 和 Markdown 内容协商，并明确固定使用建议值、不增加 Owner 配置。
 - 本文是 API / Schema、文档中心、Bootstrap 和发行生命周期的增量；新增标准发现资源，不改变业务权限、认证、API 兼容版本、D1 schema、安装来源或执行授权。
 
 ## 来源与 origin
@@ -37,13 +37,39 @@ GET / HEAD 均提供 `rel="api-catalog"` 的 Link。首页成功的 GET / HEAD H
 
 ## robots 与 sitemap
 
-根 `/robots.txt` 返回 UTF-8 `text/plain`，默认 `User-agent: *` / `Disallow: /`，精确允许首页和 `apps/docs/catalog.json` 中两种语言的 canonical HTML 路径，并链接同 origin 的 sitemap。未知文档、私有看板、Issue、管理、API、身份和兑换路径保持禁止爬取。该默认值用于公开页面边界，不声明 AI 训练许可；robots 不是认证或访问控制。
+根 `/robots.txt` 返回 UTF-8 `text/plain`，默认 `User-agent: *` / `Disallow: /`，精确允许首页和 `apps/docs/catalog.json` 中两种语言的 canonical HTML 路径，并链接同 origin 的 sitemap。未知文档、私有看板、Issue、管理、API、身份和兑换路径保持禁止爬取。robots 声明公开页面边界与下述内容使用偏好，不代替认证或访问控制。
 
 `/sitemap.xml` 返回有效 UTF-8 XML，以相同公开 catalog 生成绝对 loc。只包含首页和真实公开 canonical HTML；隐藏但保留的兼容页面仍可列出，语言跳转入口、Markdown、SPA fallback、移除页和私有页面不列出。目录增删与文档构建、Worker 同步，不维护第二份手工页面列表。
 
-Cloudflare Managed robots、Bot / 训练策略等由 Owner 按 CFK-724 独立选择；代码不修改 Zone 设置、开关、DNS 或 Transform Rules。若平台改写 robots，应核对最终实际响应与 Owner 选择，不把本地源文件当作线上政策证明。
+代码不修改 Cloudflare Managed robots、Bot、Zone 设置、DNS 或 Transform Rules，不引入控制台操作步骤。已有 Cloudflare 层的策略保持独立；若平台改写 robots，应核对线上最终响应是否保留本合同，不把本地源文件当作线上政策证明。
 
 规范来源：[RFC 9309](https://www.rfc-editor.org/rfc/rfc9309)、[Sitemaps protocol](https://www.sitemaps.org/protocol.html)。
+
+## 固定公开内容使用偏好
+
+`robots.txt` 中公开爬取规则所在的 `User-agent: *` 组固定声明：
+
+```text
+Content-Signal: ai-train=no, search=yes, ai-input=yes
+```
+
+成功的公开首页、`/docs/` 目录中的公开 HTML / Markdown（包括显式 `.md`），以及 `/llms.txt`、`/docs/llms.txt` 使用相同的 `Content-Signal` 响应头。含义为允许搜索，以及 Agent 将公开内容作为回答、推理或检索增强生成的输入，不允许使用公开内容训练或微调模型。该声明是内容使用偏好，不授予登录、业务操作、读取私有内容或执行安装脚本的权限；缺失信号也不视为已授予这些权限。根路径既有 `join.md`、`join.zh-CN.md`、`deploy-guide.md`、`deploy-guide.zh-CN.md` 保留原路由、媒体类型与响应头合同，本增量不扩展其处理。
+
+这些值随应用发行固定，不提供 Owner 设置、环境变量或新数据库字段。普通安装和升级交付同一政策，无需用户决定三类术语或另开 Cloudflare 功能。错误、私有应用和业务 API 不因本增量新增内容使用声明。
+
+规范来源：[Content Signals](https://contentsignals.org/)、[Cloudflare Markdown for Agents 内容政策](https://developers.cloudflare.com/fundamentals/reference/markdown-for-agents/#content-signals-policy)。
+
+## Markdown 内容协商
+
+同实例公开首页和文档 canonical HTML URL 支持 `Accept` 内容协商。浏览器和未明确请求 Markdown 的调用方继续获得 HTML；明确接受 `text/markdown` 且其质量值严格高于 HTML 时选择 Markdown，同质量值保留 HTML。特定媒体类型的 `q=0` 覆盖通配符许可，不能通过通配符重新选中禁用的表示。成功的两种表示均带 `Vary: Accept`，保留已有 Vary token，不能让共享缓存将一种表示误发给另一种请求。
+
+文档 Markdown 表示复用该 canonical 页面构建产生的原始 `.md`，内容来自同一份双语源，不抓取 HTML、不调用模型或可选 Cloudflare 转换。返回 `text/markdown; charset=utf-8`，保留原文、语言和相对链接语义；同 canonical URL 下的链接须可正确解析。显式 `.md` URL 保持 `text/plain; charset=utf-8`，不因 Accept 改成另一页面或 SPA。未知、移除或缺失页面继续真实 404，不生成空成功响应。
+
+首页提供随 Service 版本发布的静态双语 Markdown 概览，介绍 cfKanban 的用途并链接本站双语公开手册、API Catalog、OpenAPI、Skills 发现及官方 stable 安装入口。它描述固定公开产品能力，不抓取 Vue 的空 HTML 壳，不查询 D1，不嵌入私人身份、Owner 首页说明、项目列表或登录状态；不宣称代表动态首页的完整快照。文档保持 URL 指定的语言，首页概览同时提供两种语言。
+
+GET / HEAD 的表示选择一致，HEAD 返回对应 GET 的媒体类型、安全头、Vary 与内容政策且无正文。协商过程不读取或创建 Session / Cookie / Credential，不向 Static Assets 转发身份材料。现有文档安全缓存与响应头继续有效；私有 `/app`、业务 API、静态脚本与样式、发现 JSON / XML、技能归档以及其他原始文本资源不套用 HTML 转 Markdown。
+
+规范来源：[Cloudflare Markdown for Agents](https://developers.cloudflare.com/fundamentals/reference/markdown-for-agents/)、[RFC 9110 Accept](https://www.rfc-editor.org/rfc/rfc9110#section-12.5.1)、[RFC 9110 Vary](https://www.rfc-editor.org/rfc/rfc9110#section-12.5.5)。
 
 ## 验收
 
@@ -51,4 +77,6 @@ Cloudflare Managed robots、Bot / 训练策略等由 Owner 按 CFK-724 独立选
 - 用自部署 origin 和伪造转发头验证绝对链接，无 D1、身份、限流或私有数据依赖。
 - 校验 RFC Linkset / Draft 索引字段、全部公开描述目标、catalog 对应的双语 sitemap、未知文档 404 和正常 SPA 深链。
 - 校验四归档原始字节摘要、可复现打包、解压路径、完整依赖和 helper 入口；错误摘要、缺包、旧版本路径不能静默接受。
+- 校验固定 Content-Signal 的 robots 与公开响应头一致，不新增 Owner 设置或私有读取许可；线上核对平台最终响应。
+- 覆盖 Markdown / HTML 默认、质量值、禁用值、HEAD、Vary 合并、原始 `.md`、缺失资源和公开相对链接；验证首页概览无动态或私有数据读取。
 - 执行相关路由 / 生成测试、docs:check、contracts:check、构建与完整发行验收；上线后匿名核对标准资源、链接、四份实际下载归档及当前发行，保留已验证 canonical 发行与部署读回证据。

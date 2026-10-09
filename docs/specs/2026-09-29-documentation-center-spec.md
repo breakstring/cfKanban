@@ -2,7 +2,7 @@
 
 - 状态：Frozen
 - 日期：2026-09-29
-- 授权依据：用户确认 CFK-496 的四栏目、VitePress、双语与 Agent 提示词优先方案，并授权 CFK-603、CFK-616 的导航及使用文档调整、CFK-618 的链接呈现调整。
+- 授权依据：用户确认 CFK-496 的四栏目、VitePress、双语与 Agent 提示词优先方案，并授权 CFK-603、CFK-616 的导航及使用文档调整、CFK-618 的链接呈现调整；2026-10-09 授权公开页面的 Markdown 内容协商与固定 Content Signals。
 - 本文是 Web UI、Agent Skills / Bootstrap 与发行生命周期合同的增量；只覆盖公开文档的内容、导航与打包。不改变业务权限、API、schema、凭据交付、stable 发现或部署授权。
 
 ## 阅读体验
@@ -37,6 +37,8 @@ DSH 和 Codex App 专页以技能协作为主要入口，先说明安装和直�
 
 VitePress 只在构建时生成静态文件，合入现有 `apps/web/dist/docs/`，随 Service bundle 发布。无运行时 SSR、额外 Worker、Pages、数据库或云资源。锁定稳定依赖；先构建 Web，再构建文档，避免 Web 清空输出目录时丢失文档。
 
-文档路径由 Worker 优先处理并校验公开页面集合；GET/HEAD 只读，其他方法返回 405。未知文档返回文档 404，缺失资源不得返回主应用 SPA HTML 或进入登录流程；正常 `/app` 和 `/api` 路由不改变。文档 HTML/Markdown/索引采用 `no-store, no-transform`、`no-referrer`、`nosniff`，带指纹的资源可长期缓存。原始 Markdown 明确使用 `text/plain; charset=utf-8`。
+文档路径由 Worker 优先处理并校验公开页面集合；GET/HEAD 只读，其他方法返回 405。未知文档返回文档 404，缺失资源不得返回主应用 SPA HTML 或进入登录流程；正常 `/app` 和 `/api` 路由不改变。文档 HTML/Markdown/索引采用 `no-store, no-transform`、`no-referrer`、`nosniff`，带指纹的资源可长期缓存。原始 `.md` URL 明确使用 `text/plain; charset=utf-8`。
 
-构建检查覆盖双语页面对应、目录/内部链接、正文与提示词、文档产物和搜索索引；发行校验文档版本与工件摘要，防止漏包或修改后的工件混入。验证还包括深链刷新、404、Markdown、首页入口、语言切换、复制、本地搜索及桌面/窄屏布局。业务写操作不属于文档测试。
+2026-10-09 用户授权的 [公开发现与 Agent 阅读增量](2026-10-09-public-discovery-spec.md) 增加 canonical HTML URL 的 Markdown 内容协商：依据 `Accept` 选择同页的 HTML 或构建所得 Markdown，协商 Markdown 返回 `text/markdown; charset=utf-8`，两种表示均包含 `Vary: Accept`。默认浏览器阅读保持 HTML，不改变显式 `.md` 入口、语言、公开页面集合或访问权限。成功的公开首页、`/docs/` 目录中的公开 HTML / Markdown（包括显式 `.md`），以及 `/llms.txt`、`/docs/llms.txt` 使用固定 `Content-Signal: ai-train=no, search=yes, ai-input=yes`；不增加 Owner 设置。既有根路径 `join.md`、`join.zh-CN.md`、`deploy-guide.md`、`deploy-guide.zh-CN.md` 保留原路由、媒体类型与响应头合同。
+
+构建检查覆盖双语页面对应、目录/内部链接、正文与提示词、文档产物和搜索索引；发行校验文档版本与工件摘要，防止漏包或修改后的工件混入。验证还包括深链刷新、404、原始与协商 Markdown、Accept / Vary / Content-Signal、首页入口、语言切换、复制、本地搜索及桌面/窄屏布局。业务写操作不属于文档测试。

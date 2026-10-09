@@ -8,6 +8,9 @@ import { clearCsrfCookie, clearSessionCookie } from "./kernel/csrf.ts";
 import { documentationResponse, isDocumentationPath } from "./kernel/docs.ts";
 import { homepageDiscoveryLink, publicDiscoveryResponse } from "./kernel/public-discovery.ts";
 import { agentSkillsDiscoveryResponse, isAgentSkillsDiscoveryPath } from "./kernel/agent-skills-discovery.ts";
+import { addAcceptVary } from "./kernel/content-negotiation.ts";
+import { homepageMarkdownResponse } from "./kernel/homepage-markdown.ts";
+import { withPublicContentSignal } from "./kernel/public-content.ts";
 import { ApiError, errorResponse, notFound, platformUnavailable } from "./kernel/errors.ts";
 import {
   createRequestContext,
@@ -101,8 +104,10 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
       return withRequestId(await agentSkillsDiscoveryResponse(request, env), context.requestId);
     }
     if (isDocumentationPath(context.url.pathname)) {
-      return withRequestId(await documentationResponse(request, env), context.requestId);
+      return withRequestId(withPublicContentSignal(await documentationResponse(request, env)), context.requestId);
     }
+    const homepageMarkdown = homepageMarkdownResponse(request);
+    if (homepageMarkdown) return withRequestId(homepageMarkdown, context.requestId);
     if (isRateLimitedDynamicPath(context.url.pathname)) {
       await enforceInstanceRateLimit(env);
       if (isUnauthenticatedSensitivePath(context.method, context.url.pathname)) {
@@ -117,7 +122,8 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
       throw notFound();
     }
 
-    let assetResponse = await env.ASSETS.fetch(request);
+    const publicHomepageRequest = context.url.pathname === "/" ? new Request(new URL("/", request.url), { method: request.method }) : request;
+    let assetResponse = await env.ASSETS.fetch(publicHomepageRequest);
     if (assetResponse.status === 404 && (request.method === "GET" || request.method === "HEAD")) {
       // Static Assets 对被排除的文档资源直接返回真实 404；应用导航在 Worker 内回退。
       const shellUrl = new URL(request.url);
@@ -130,7 +136,9 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
         && assetResponse.status === 200 && /^text\/html(?:;|$)/iu.test(assetResponse.headers.get("content-type") ?? "")) {
         const headers = new Headers(assetResponse.headers);
         headers.append("link", homepageDiscoveryLink(request));
+        addAcceptVary(headers);
         assetResponse = new Response(assetResponse.body, { headers, status: assetResponse.status, statusText: assetResponse.statusText });
+        assetResponse = withPublicContentSignal(assetResponse);
       }
       return withSpaDocumentHeaders(assetResponse, context.requestId);
     }

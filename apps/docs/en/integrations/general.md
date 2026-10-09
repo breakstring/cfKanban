@@ -21,6 +21,8 @@ After installation, four Skills should be available: `cfkanban-howto` explains u
 
 Agents that support Skills Discovery can also discover these four Skills and versioned archives with their complete dependencies on this site. This entry describes **the version currently running here**, which may be an RC. Use the official stable guide above for a first installation, and explicitly select a version if you need an RC. Discovery or downloading does not automatically install, execute, update local Skills, or upgrade an instance; the Agent still verifies the official source and complete release artifacts.
 
+Agents can read this site's public documentation as Markdown from the same page URL. The homepage also offers a public product overview and links. Public content allows search and use as input to answers, and disallows model training; no Owner setting is needed. Reading these pages does not grant access to private projects or permission to execute their example requests.
+
 ### Skills already installed?
 
 If Skills already load but local components or connections are missing, tell the Agent:

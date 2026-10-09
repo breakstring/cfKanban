@@ -1,6 +1,7 @@
 import catalog from "../../../docs/catalog.json" with { type: "json" };
 
 import { HTML_DOCUMENT_CACHE_CONTROL } from "./http.ts";
+import { PUBLIC_CONTENT_SIGNAL } from "./public-content.ts";
 
 const API_CATALOG_PATH = "/.well-known/api-catalog";
 const API_CATALOG_PROFILE = "https://www.rfc-editor.org/info/rfc9727";
@@ -56,6 +57,7 @@ function robotsBody(origin: string): string {
   // 精确匹配公开页面，使私有、兑换及未知路径继续默认禁止爬取。
   return [
     "User-agent: *",
+    `Content-Signal: ${PUBLIC_CONTENT_SIGNAL}`,
     "Disallow: /",
     ...crawlablePaths.map(path => `Allow: ${path}$`),
     "",
@@ -104,6 +106,7 @@ export function publicDiscoveryResponse(request: Request): Response | null {
     body = catalogBody(url.origin);
   } else if (url.pathname === "/robots.txt") {
     headers = discoveryHeaders("text/plain; charset=utf-8");
+    headers.set("content-signal", PUBLIC_CONTENT_SIGNAL);
     body = robotsBody(url.origin);
   } else {
     headers = discoveryHeaders("application/xml; charset=utf-8");

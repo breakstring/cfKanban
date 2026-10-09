@@ -19,7 +19,9 @@ WAF management has been removed from the Owner page and normal Agent/CLI setup. 
 
 Each release provides an API catalog, Skills Discovery, `robots.txt`, and a public-page sitemap without requiring separate response-header rules. Discovery describes capabilities that exist; it does not expose private projects or change installation permissions.
 
-The default crawl scope is the homepage and bilingual public documentation; other pages remain disallowed. The sitemap follows the public documentation catalog. Robots rules do not replace authentication or authorization and do not grant permission for AI training. The Owner separately chooses Cloudflare Managed robots, permitted bots, and training policies. If the platform rewrites a response, verify the final online result against your selected policy; ordinary deployments and upgrades do not change those switches for you.
+The crawl scope is the homepage and bilingual public documentation; other pages remain disallowed. The sitemap follows the public documentation catalog. Public content declares `ai-train=no, search=yes, ai-input=yes`: search and use as input to an Agent's answer are allowed, while model training is not. This policy is included with the application and needs no Owner setting. Robots and content signals do not replace authentication or authorization.
+
+Agents can request Markdown from a public documentation URL or the homepage, while browsers continue to receive HTML by default. Documentation uses its original source; the homepage provides a public product overview and links. Private projects, issues, and management pages are not converted or exposed. No separate Cloudflare conversion feature is required. Ordinary deployments and upgrades do not change Cloudflare bot or managed-robots switches; if an existing platform setting rewrites responses, verify the final online content signals and crawl scope.
 
 ## Enable attachments
 
