@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
 import { canonicalDigest, jsonPointerChanges, requireHttpsOrigin, requireString, requireUuid } from "./utils.mjs";
+import { assertInitialSchema30Supported } from "./migration-sql-compatibility.mjs";
 
 export { createInstanceUpgradePlan } from "./upgrade-plan.mjs";
 
@@ -66,6 +67,7 @@ export function createStrictZeroPlan({
   if (release.schema_version !== undefined && (!Number.isSafeInteger(release.schema_version) || release.schema_version < 1)) {
     throw toolError("INVALID_DEPLOYMENT_RELEASE", "release.schema_version must be a positive integer");
   }
+  assertInitialSchema30Supported(release.schema_version);
   const plan = {
     schema_version: 1,
     kind: "strict_zero_deploy",

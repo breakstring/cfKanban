@@ -107,7 +107,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
   const operationContext=new AsyncLocalStorage();
   const markWriteStarted=()=>{const context=operationContext.getStore();if(context)context.writeStarted=true;};
   const fetchImpl=(url,options={})=>{if(!['GET','HEAD'].includes((options.method??'GET').toUpperCase()))markWriteStarted();return baseFetch(url,{...options,signal:options.signal?AbortSignal.any([options.signal,signal]):signal});};
-  const operationRunner=options=>{const run=capturedRunner(signal,options);return (...args)=>{markWriteStarted();return run(...args);};};
+  const operationRunner=options=>(...args)=>{const run=capturedRunner(signal,typeof options==='function'?options(...args):options);markWriteStarted();return run(...args);};
   const checkCancelled=()=>{if(signal.aborted)throw toolError('CLI_OPERATION_CANCELLED','Operation cancelled; recover any retained write before another mutation');};
   const gateContext=new AsyncLocalStorage();
   const helper=async(name,input)=> {
@@ -127,7 +127,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
         return loadCanonicalLauncher({projectionRoot:root,home,stateRoot});
       }});
     }
-    const result=await dispatchImpl(name,{...input,home,stateRoot,fetchImpl,...(/^(?:deploy wrangler-action|runtime .*readback|runtime (?:cloudflare-auth-action|inspect-cloudflare-auth|resolve-cloudflare-auth)|owner-recovery |deployment inspect-existing)/.test(name)?{runner:operationRunner()}:{})});
+    const result=await dispatchImpl(name,{...input,home,stateRoot,fetchImpl,...(/^(?:deploy wrangler-action|runtime .*readback|runtime (?:cloudflare-auth-action|inspect-cloudflare-auth|resolve-cloudflare-auth)|owner-recovery |deployment inspect-existing)/.test(name)?{runner:operationRunner(name==='deploy wrangler-action'&&input.action==='deploy_worker_and_static_assets'?(_executable,args)=>args[0]==='deploy'&&!args.includes('--dry-run')?{timeoutMs:15*60*1000}:undefined:undefined)}:{})});
     if(name==='credential prepare'&&input.purpose==='owner_rotation'&&context?.record.command.workflow==='owner-rotate') {
       const {metadata}=await loadPendingCredentialSecret({stateRoot,instanceId:input.instanceId});
       const binding=pick(metadata,['instance_id','principal_id','credential_id','credential_id_binding','operation_id','idempotency_key','purpose','fingerprint','token_digest']);

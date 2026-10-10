@@ -13,6 +13,7 @@ import { toolError } from "./errors.mjs";
 import { assessMigrationLedgerRecovery, normalizeExpectedMigrationData, reconcileMigrationState } from "./migrations.mjs";
 import { loadPendingCredentialSecret } from "./state.mjs";
 import { UPGRADE_MIGRATION_EXECUTION } from "./upgrade-plan.mjs";
+import { assertInitialSchema30Supported, prepareUpgradeMigrationSql } from "./migration-sql-compatibility.mjs";
 import { verifyInstalledServiceBundle } from "./service-bundle.mjs";
 import { deploymentCompletion, findDeploymentAttempt, isDeploymentMarker, prepareDeploymentProof } from "./worker-deployment-recovery.mjs";
 import { canonicalDigest, normalizeLf, readJson, requireString, requireUuid, sha256Bytes } from "./utils.mjs";
@@ -23,6 +24,10 @@ const ALPHA57_READBACK_SHA256 = "1aee968287724dfa5b083fd53e92e0e8e93eaf3a9dd8147
 
 const MAX_MIGRATION_LEDGER_ROWS = 1024;
 const MAX_MIGRATION_SCHEMA_ARTIFACTS = 4096;
+const INITIAL_DEPLOYMENT_WRITE_ACTIONS = new Set([
+  "create_d1", "deploy_worker_and_static_assets", "apply_non_destructive_migrations", "apply_migration",
+  "initialize_migration_checksum_ledger", "record_migration_checksum", "bootstrap_owner",
+]);
 const OWNER_BOOTSTRAP_READBACK_FIELDS = Object.freeze([
   "principals",
   "instance_meta",
@@ -776,7 +781,8 @@ async function validateUpgradeAction({
     if (sha256Bytes(Buffer.from(normalizeLf(migrationText), "utf8")) !== migration.sha256) {
       throw toolError("UPGRADE_MIGRATION_SOURCE_DRIFT", "Migration SQL digest differs from the upgrade plan", { name });
     }
-    const migrationSql = normalizeLf(migrationText);
+    const execution = prepareUpgradeMigrationSql({ plan, migration, sourceSql: normalizeLf(migrationText) });
+    const migrationSql = execution.sql;
     assertMigrationQuery(plan, migrationSql);
     const selected = migrationState.state.migrations.find((entry) => entry.sequence === migration.sequence && entry.name === migration.name);
     const earlierIncomplete = migrationState.state.migrations.some((entry) => entry.sequence < migration.sequence && entry.state !== "applied");
@@ -790,7 +796,7 @@ async function validateUpgradeAction({
     if (alreadyApplied) {
       throw toolError("UPGRADE_MIGRATION_ALREADY_ATTEMPTED", "Migration already succeeded in this journal; read back before continuing", { name });
     }
-    return { migration, migrationSql };
+    return { migration, migrationSql, migrationExecution: execution.evidence };
   }
 
   const incomplete = migrationState.state.migrations.filter((entry) => entry.state !== "applied");
@@ -872,6 +878,9 @@ export async function executeWranglerAction({
   environment: controlEnvironment = process.env,
   tokenRunner,
 }) {
+  if (plan.kind === "strict_zero_deploy" && INITIAL_DEPLOYMENT_WRITE_ACTIONS.has(action)) {
+    assertInitialSchema30Supported(plan.release?.schema_version);
+  }
   const journal = await assertJournalAuthorization({ stateRoot, instanceId, operationId, taskId, plan });
   const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
   if (plan.kind === "deployed_instance_upgrade" && (plan.current?.provenance === "remote_observed" || plan.resources?.r2 || plan.usage_analytics || plan.cost_protection || plan.public_access) && action === "deploy_worker_and_static_assets") {
@@ -1040,7 +1049,7 @@ export async function executeWranglerAction({
       ...(migrationReadbackSource === null ? {} : { migration_readback_source: migrationReadbackSource }),
       executable,
       args: action === "apply_migration" ? args.map((arg) => arg.startsWith("--command=") ? "--command=[VERIFIED_PUBLIC_MIGRATION_SQL]" : arg) : args,
-      ...(action === "apply_migration" ? { migration_execution: { ...plan.migrations.execution, sql_bytes: Buffer.byteLength(upgradeAction.migrationSql, "utf8") } } : {}),
+      ...(action === "apply_migration" ? { migration_execution: { ...plan.migrations.execution, ...upgradeAction.migrationExecution } } : {}),
       ...(actionMigration === null ? {} : {
         migration: {
           sequence: actionMigration.sequence,

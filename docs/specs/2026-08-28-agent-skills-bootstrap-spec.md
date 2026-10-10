@@ -470,6 +470,12 @@ Service deployment bundle 中的 D1 migration manifest 不能只是一组按文�
 
 2026-09-08 隔离复现确认：远端 `wrangler d1 execute --file` 的失败回滚不等于整文件共享同一 SQL 事务，不能依赖 `PRAGMA defer_foreign_keys` 在 ingestion 全程持续有效。已验证 canonical Service bundle 的公开升级 migration 必须以完整 SQL 单次 `wrangler d1 execute --remote --command=<SQL>` 提交到 `/query`；保留原始 SQL digest，不逐语句执行、不分块，也不在失败后回退 `--file`。每条 SQL 最多 24 KiB UTF-8（24,576 字节），这是兼顾 Windows argv 的保守限额，不是 D1 平台最大值；超限在远端写入前停止。
 
+2026-10-10 增补一项固定兼容例外：仅对 `0030_issue_trend_backfill_maintenance.sql` 且原始 SHA-256 为 `4a1db214135aeb642784fb08a98752bad7caa920dcf12f9f9bf0fdd6e7fafbb5` 的已发布字节，允许已验证 Skill 使用内置 allowlist 中固定、语义等价的 `CASE … END` 表达式括号变换。原文件与 manifest/ledger checksum 必须保持不变；新 plan 必须明确冻结转换标识、原始摘要与实际执行 SQL 摘要，并纳入 plan digest。执行前先校验原始名称与字节摘要，再校验固定转换结果与执行摘要；journal 同时记录这两个摘要。转换后的完整 SQL 仍须满足 `single_query` 与 24,576 字节限制。没有明确转换记录的旧 plan 不得套用此例外；名称或摘要不匹配、任意 SQL 改写、逐语句/分块执行以及失败后的隐式 fallback 一律禁止。
+
+该原始 SQL 通过本地 SQLite 与固定 Wrangler splitter 验证，但远端 `/query` 返回 `incomplete input`，后续 schema 读回确认未部分应用。远端解析路径不等同于本地 splitter；本地 validator 通过不能证明远端解析器兼容。未加括号的 `CASE … END` 被远端误拆分是当前推断，不能把这一兼容变换推广为通用 SQL 修复入口；最终仍须以远端 ledger/schema 读回证明应用结果。
+
+此 schema 30 兼容路径在 RC9 的支持范围是既有实例从 schema 29 升至 30，以及已处于 schema 30 的无 migration 升级；不支持 schema 30 首次部署。默认 stable 的首次安装流程不受影响。schema 30 新装必须在创建计划及云端写入前拒绝，不能将公开升级的转换隐式套入首次部署；RC9 也不得凭旧 schema 30 初始部署 plan 继续云端写入。只读资源、migration/schema 读回仍可用于核实中断状态。首次部署所需的 migration 投影、摘要与恢复合同须单独冻结并验收后才能开放，不能临时改写已发布文件。
+
 该入口限定于已验证的公开升级 migration。Skill 生成的 migration checksum 与 Owner bootstrap SQL 继续使用原有受限文件路径，不把秘密送入命令参数；文件不得包含显式 `BEGIN`、`COMMIT`、`ROLLBACK` 或 `SAVEPOINT`。现有 bootstrap 读回及受保护重试、checksum 同 journal 缺行恢复条件保持不变。只读 SELECT readback 仍通过 `--command --json` 执行。
 
 upgrade plan 至少包含：
@@ -478,7 +484,7 @@ upgrade plan 至少包含：
 - 当前与目标 Skill/service/schema 兼容矩阵，必要的 Skill update 作为独立第一阶段；
 - Worker code/config/bindings delta，以及每条 D1 migration 的顺序、摘要和 `backward_compatible | destructive` 分类；
 - 当前 Worker Observability 的完整已知非秘密配置（包括日志、追踪、采样和查询字符串脱敏），纳入计划并准确投影到部署配置，部署前后及 finalization 核对；新版计划缺读回或含未知字段时拒绝，不能依赖部署工具的缺省值保留 Dashboard 设置；
-- 公开升级 migration 的执行约束 `mode: single_query`、`max_sql_bytes: 24576`，纳入 plan digest 并在执行前核对，不允许旧计划隐式切换入口；
+- 公开升级 migration 的执行约束 `mode: single_query`、`max_sql_bytes: 24576`，以及适用时上述固定兼容转换的标识、原始摘要与执行摘要，纳入 plan digest 并在执行前核对，不允许旧计划隐式切换入口或套用转换；
 - migration 前取得并验证的 D1 Time Travel bookmark 或等价 restore point、当前平台保留边界，以及 restore 会覆盖哪些时间之后的写入；
 - 预计中断、费用/domain/resource delta、验证步骤、Worker rollback 条件、数据库不可自动回退的风险；
 - 独立 plan digest、operation ID/journal 和去敏 before/after receipt。

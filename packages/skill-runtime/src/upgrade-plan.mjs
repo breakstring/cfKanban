@@ -12,6 +12,7 @@ import { normalizeExpectedMigrationData } from "./migrations.mjs";
 import { satisfiesSimpleRange } from "./tool-runtime.mjs";
 import { ATTACHMENT_CLEANUP_CRON, attachmentBucketName } from "./r2-storage.mjs";
 import { requireHttpsOrigin, requireString, requireUuid } from "./utils.mjs";
+import { plannedMigrationSqlCompatibility } from "./migration-sql-compatibility.mjs";
 
 export const UPGRADE_MIGRATION_EXECUTION = Object.freeze({ mode: "single_query", max_sql_bytes: 24 * 1024 });
 
@@ -409,6 +410,7 @@ export function createInstanceUpgradePlan({
   }
   if (typeof allow_breaking_change !== "boolean") throw toolError("INVALID_UPGRADE_PLAN", "allow_breaking_change must be boolean");
   const orderedMigrations = migrationDelta(migrations, allow_breaking_change);
+  const migrationSqlCompatibility = plannedMigrationSqlCompatibility(orderedMigrations);
   const breakingChange = orderedMigrations.some((migration) => migration.classification === "breaking_non_destructive");
   const containerUuidChange = orderedMigrations.some((migration) => migration.name === "0003_container_uuid.sql");
   const principalNamesChange = orderedMigrations.some((migration) => migration.name === "0008_principal_names.sql");
@@ -512,6 +514,7 @@ export function createInstanceUpgradePlan({
     },
     migrations: {
       execution: { ...UPGRADE_MIGRATION_EXECUTION },
+      ...(migrationSqlCompatibility.length > 0 ? { sql_compatibility: migrationSqlCompatibility } : {}),
       ordered: orderedMigrations,
       allow_destructive: false,
       allow_breaking_change,
