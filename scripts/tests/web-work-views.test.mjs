@@ -54,7 +54,7 @@ const renderer = createRenderer({
   insertStaticContent(text, parent, anchor) { const target = node('#static', text); target.parent = parent; const at = anchor ? parent.children.indexOf(anchor) : -1; parent.children.splice(at < 0 ? parent.children.length : at, 0, target); return [target, target]; },
 });
 function all(target) { return [target, ...target.children.flatMap(all)]; }
-function text(target) { return target.text + target.children.map(text).join(''); }
+function text(target) { return target.tag === '#comment' ? '' : target.text + target.children.map(text).join(''); }
 async function until(check) {
   for (let step = 0; step < 100; step++) { await new Promise((done) => setTimeout(done, 5)); await nextTick(); if (check()) return; }
   assert.fail('component did not reach expected state');
@@ -64,7 +64,8 @@ const p1 = '00000000-0000-4000-8000-000000000002';
 const p2 = '00000000-0000-4000-8000-000000000003';
 const principal = '00000000-0000-4000-8000-000000000004';
 const projects = [p1, p2].map((id, index) => ({ workspace_id: workspace, workspace_display_name: 'Team', project_id: id, project_display_name: `Project ${index}`, role: index ? 'reader' : 'writer' }));
-const session = { allowed_scope: { kind: 'project_selection', projects }, principal: { id: principal, display_name: 'Pat', is_owner: false } };
+const session = { allowed_scope: { kind: 'project_selection', projects }, principal: { id: principal, display_name: 'Pat', is_owner: false },
+  session_id: 'fixture-session', source: { kind: 'credential', id: 'fixture-source' }, target: { kind: 'project_selection' }, expires_at: '2026-10-11T00:00:00Z' };
 const filter = { projects: [p1], queue: 'all', status: '', assignee: '', search: '', priorities: [], labels: [] };
 const page = (items, cursor = null) => ({ items, has_more: !!cursor, next_cursor: cursor });
 const workflowStatuses = ['backlog', 'todo', 'in_progress', 'done', 'canceled'];
@@ -1170,11 +1171,11 @@ test('workspace management preserves its Owner source when opening a child proje
   };
   const { app, host } = mount(ManagementPage, { session: instanceOwner, workspaceId: workspace });
   try {
-    await until(() => !!button(host, 'Manage'));
-    assert.equal(button(host, 'Workspace settings').props['aria-current'], 'page');
+    await until(() => !!button(host, 'Settings'));
+    assert.equal(button(host, 'Settings').props['aria-current'], 'page');
     const settingsForm = all(host).find(item => item.tag === 'form' && text(item).startsWith('Settings'));
     assert.notEqual(settingsForm.style.display, 'none');
-    button(host, 'Projects').props.onClick(); await nextTick();
+    button(host, 'Projects').props.onClick(); await until(() => !!button(host, 'Manage'));
     button(host, 'Manage').props.onClick();
     assert.deepEqual(history.navigations.at(-1), ['push', ownerProjectSettingsPath(workspace, p1)]);
     button(host, '← Back to management').props.onClick();
@@ -1183,15 +1184,15 @@ test('workspace management preserves its Owner source when opening a child proje
 });
 
 test('workspace section query opens only known single sections while normal management and project pages keep their defaults', async () => {
-  for (const [query, expected] of [['', 'Projects'], ['&section=projects', 'Projects'], ['&section=settings', 'Workspace settings'], ['&section=members', 'Members and permissions'], ['&section=https://evil.invalid/', 'Projects'], ['&section=settings&section=members', 'Projects']]) {
+  for (const [query, expected] of [['', 'Projects'], ['&section=projects', 'Projects'], ['&section=settings', 'Settings'], ['&section=trends', 'Trends'], ['&section=members', 'Members and permissions'], ['&section=https://evil.invalid/', 'Projects'], ['&section=settings&section=members', 'Projects']]) {
     const history = installProjectHistory(`/app/manage?workspace=${workspace}${query}`);
     globalThis.fetch = async path => Response.json(new URL(path, 'https://local.test').pathname === `/api/v1/workspaces/${workspace}` ? { id: workspace, display_name: 'Team', deleted_at: null, version: 2, allowed_actions: ['read', 'update', 'create_project'] } : page([]));
     const { app, host } = mount(ManagementPage, { session: instanceOwner, workspaceId: workspace });
     try {
-      await until(() => !!button(host, 'Workspace settings'));
+      await until(() => !!button(host, 'Settings'));
       assert.equal(button(host, expected).props['aria-current'], 'page');
       const settingsForm = all(host).find(item => item.tag === 'form' && text(item).startsWith('Settings'));
-      assert.equal(settingsForm.style.display === 'none', expected !== 'Workspace settings');
+      assert.equal(settingsForm.style.display === 'none', expected !== 'Settings');
     } finally { app.unmount(); history.restore(); }
   }
   const history = installProjectHistory(`${ownerProjectSettingsPath(workspace, p1)}&section=settings`);
@@ -1421,11 +1422,12 @@ test('workspace management remains separate from project settings tabs', async (
   const { app, host } = mount(ManagementPage, { session, workspaceId: workspace });
   try {
     await until(() => text(host).includes('Management is unavailable in this session.'));
-    assert.match(text(host), /Workspace management/);
+    assert.match(text(host), /Workspace settings/);
     assert.doesNotMatch(text(host), /Project settings/);
     assert.equal(button(host, 'Labels'), undefined);
     assert.equal(button(host, 'Activity'), undefined);
     assert.equal(button(host, 'Deleted issues'), undefined);
+    assert.equal(button(host, 'Trends'), undefined);
     assert.deepEqual(calls, [`/api/v1/workspaces/${workspace}`]);
   } finally { app.unmount(); }
 });

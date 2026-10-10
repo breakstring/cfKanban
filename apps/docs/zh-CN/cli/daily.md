@@ -76,4 +76,4 @@ cfkanban web open
 
 ## Issue 趋势
 
-使用 `issue trends --days 30` 或 `workspace issue trends --days 30` 读取有权范围内的 UTC 每日存量与新增/完成操作次数。项目趋势可指定一个里程碑 UUID，工作区可重复 `--project` 缩小范围。当天尚未结束，缺失历史为 null 而非零。日期、范围和覆盖口径见 [Issue 趋势](../usage/trends.md)。
+使用 `issue trends --days 30` 或 `workspace issue trends --days 30` 读取有权范围内的 UTC 每日存量与新增/完成操作次数。项目趋势可指定一个里程碑 UUID，工作区趋势仅 Owner / 本工作区管理员可读，固定汇总全部未归档项目，不支持项目子集。当天尚未结束，缺失历史为 null 而非零。日期、范围和覆盖口径见 [Issue 趋势](../usage/trends.md)。

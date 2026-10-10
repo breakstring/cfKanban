@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
-import { createTrendBackfillMeter, DEFAULT_TREND_BACKFILL_BUDGET, inspectTrendBackfill, normalizeTrendBackfillBudget, runBoundedTrendBackfill, runTrendBackfill, summarizeTrendBackfill } from '../../packages/skill-runtime/src/issue-trend-backfill.mjs';
+import { createTrendBackfillMeter, createTrendBackfillPlan, DEFAULT_TREND_BACKFILL_BUDGET, inspectTrendBackfill, normalizeTrendBackfillBudget, recoverTrendBackfill, runBoundedTrendBackfill, runTrendBackfill, summarizeTrendBackfill } from '../../packages/skill-runtime/src/issue-trend-backfill.mjs';
+import { getInstancePaths } from '../../packages/skill-runtime/src/state.mjs';
+import { treeDigest } from '../../packages/skill-runtime/src/skill-update.mjs';
+import { atomicWriteJson, canonicalDigest, sha256Bytes } from '../../packages/skill-runtime/src/utils.mjs';
+import { createMcpStateFixture } from './mcp-fixture.mjs';
 import { getCommandCatalog } from '../../packages/skill-runtime/src/cli.mjs';
 import { COMMANDS } from '../../packages/cli/src/catalog.mjs';
 import { parseArguments } from '../../packages/cli/src/parser.mjs';
@@ -147,4 +154,111 @@ test('Skill and public CLI expose independent inspect/plan/run with correct effe
   assert.equal(command.effect, 'write'); assert.equal(command.workflow, 'trend-backfill-run');
   const parsed = await parseArguments(['deploy', 'trends', 'plan', '--input-file', 'fake', '--json', '--no-interactive'], { fileRead: async () => JSON.stringify({ instanceId: randomUUID(), taskId: 'test', currentReceiptPath: '/private/receipt.json', serviceBundleRoot: '/private/bundle', wranglerExecutable: '/private/wrangler', budget: { batchSize: 2 } }) });
   assert.equal(parsed.input.budget.batchSize, 2); assert.equal(parsed.command.name, 'deploy trends plan');
+});
+
+// 每个 fixture 拥有独立私有状态、不可变 Service cache 和内存 D1；全部请求由严格端点接管。
+async function schemaFixture(t, schemaVersion, { manifestVersion = schemaVersion } = {}) {
+  const f = await createMcpStateFixture(t);
+  const databaseId = randomUUID(), versionId = randomUUID(), deploymentId = randomUUID();
+  const releaseVersion = `1.12.0-schema-${schemaVersion}-fixture`, publisher = 'https://publisher.invalid';
+  const source = `${publisher}/${releaseVersion}/service.zip`;
+  const current = JSON.parse(await readFile(new URL('../../migrations/manifest.json', import.meta.url), 'utf8'));
+  const manifest = { ...current, schema_version: manifestVersion, migrations: current.migrations.filter(entry => entry.sequence <= manifestVersion) };
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  for (const entry of manifest.migrations) db.exec(await readFile(new URL(`../../migrations/${entry.name}`, import.meta.url), 'utf8'));
+  db.prepare('INSERT INTO principals(id,display_name,display_name_key,created_at,updated_at) VALUES(?,?,?,1,1)').run(f.principalId, 'MCPFixture', 'mcpfixture');
+  db.prepare('INSERT INTO instance_meta VALUES(1,?,?,?, ?,1)').run(f.instanceId, f.principalId, '0.1.0', schemaVersion);
+  for (const entry of manifest.migrations) db.prepare('INSERT INTO cfkanban_migration_ledger VALUES(?,?,?,?,?,?,1)').run(entry.sequence, entry.name, entry.sha256, entry.classification, entry.reentry, randomUUID());
+  const bundleRoot = path.join(f.stateRoot, 'service-releases', 'versions', releaseVersion, 'bundle');
+  const module = "export const BACKFILL_ALGORITHM_VERSION=1; export const HISTORY_PAGE_LIMIT=100; export const JOB_PAGE_SQL='SELECT 1'; export const TREND_HISTORY_PAGE_SQL='SELECT 1'; export function createTrendBackfillCommit(){throw new Error('Inspection must not commit history');}";
+  const files = { 'dist/index.js': '', 'dist/issue-trend-backfill.mjs': module,
+    'dist/issue-trend-backfill-build.json': JSON.stringify({ release_version: releaseVersion, algorithm_version: 1, entry: 'issue-trend-backfill.mjs', sha256: sha256Bytes(Buffer.from(module)) }),
+    'contracts/openapi.json': JSON.stringify({ info: { version: releaseVersion }, 'x-cfkanban-service-version': '0.1.0' }),
+    'contracts/service-api.json': JSON.stringify({ service_version: '0.1.0' }),
+    'migrations/manifest.json': JSON.stringify(manifest), 'release/version.json': JSON.stringify({ version: releaseVersion }),
+    'release/deployment/migration-readback.sql': '', 'wrangler-config-schema.json': '{}', 'wrangler.template.json': '{}' };
+  for (const [name, value] of Object.entries(files)) { const file = path.join(bundleRoot, name); await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, value); }
+  await mkdir(path.join(bundleRoot, 'apps/web/dist'), { recursive: true });
+  await writeFile(path.join(path.dirname(bundleRoot), '.cfkanban-release.json'), JSON.stringify({ schema_version: 1, kind: 'service_deployment_bundle', version: releaseVersion, artifact_sha256: 'b'.repeat(64), publisher, source, bundle_path: bundleRoot, bundle_tree_digest: await treeDigest(bundleRoot) }));
+  const receipt = { kind: 'cfkanban_instance_upgrade_receipt', instance: { id: f.instanceId, schema_version: schemaVersion, api_origin: f.origin, origin_version: 1, service_version: '0.1.0' },
+    verification: { canonical_release: true, worker_deployment_readback: true, migration_ledger_and_schema: true },
+    service_release: { after: { publisher, service_bundle_version: releaseVersion, service_bundle_sha256: 'b'.repeat(64), service_bundle_source: source } },
+    owner: { principal_id: f.principalId, credential_id: f.credential.credential_id, credential_fingerprint: f.credential.fingerprint, display_name: 'MCPFixture' },
+    cloudflare: { account_id: 'a'.repeat(32), profile: 'schema-fixture', worker: { name: 'fixture-worker', version_id: versionId, deployment_id: deploymentId }, d1: { name: 'fixture-db', database_id: databaseId } } };
+  const receiptPath = path.join(getInstancePaths(f).receiptsRoot, `${randomUUID()}.upgrade.json`);
+  await atomicWriteJson(receiptPath, receipt);
+  const network = [], observed = { health: schemaVersion, meta: schemaVersion };
+  const api = { ...f.discovery, release_version: releaseVersion, service_version: '0.1.0', schema_version: schemaVersion };
+  const input = { stateRoot: f.stateRoot, instanceId: f.instanceId, currentReceiptPath: receiptPath, serviceBundleRoot: bundleRoot, wranglerExecutable: '/isolated/wrangler',
+    tokenRunner: async () => ({ stdout: JSON.stringify({ type: 'oauth', token: 'isolated-control-token' }) }),
+    fetchImpl: async (url, options = {}) => {
+      const target = new URL(url); network.push({ path: target.pathname, method: options.method ?? 'GET' });
+      if (target.origin === 'https://api.cloudflare.com') {
+        const suffix = target.pathname.replace(`/client/v4/accounts/${'a'.repeat(32)}`, '');
+        let result;
+        if (suffix === `/d1/database/${databaseId}/query`) {
+          const query = JSON.parse(options.body); assert.match(query.sql, /^SELECT /); assert.deepEqual(query.params, []);
+          result = [{ success: true, results: db.prepare(query.sql).all(), meta: { rows_read: 1, rows_written: 0, duration: 0.1 } }];
+        } else {
+          assert.equal(options.method, 'GET');
+          const values = { [`/workers/scripts/fixture-worker/deployments`]: { deployments: [{ id: deploymentId, versions: [{ version_id: versionId, percentage: 100 }] }] },
+            [`/workers/scripts/fixture-worker/versions/${versionId}`]: { id: versionId, resources: { bindings: [{ type: 'd1', name: 'DB', database_id: databaseId }] } },
+            [`/d1/database/${databaseId}`]: { uuid: databaseId, name: 'fixture-db' } };
+          assert.ok(Object.hasOwn(values, suffix), `Unexpected fixture control endpoint ${suffix}`); result = values[suffix];
+        }
+        return Response.json({ success: true, result });
+      }
+      assert.equal(target.origin, f.origin);
+      if (target.pathname === '/.well-known/cfkanban-instance.json') return Response.json(api);
+      if (target.pathname === '/healthz') return Response.json({ ...api, schema_version: observed.health, d1: 'reachable' });
+      if (target.pathname === '/api/v1/meta') return Response.json({ ...api, schema_version: observed.meta, principal: { id: f.principalId, is_owner: true } });
+      if (target.pathname === '/api/v1/me') return Response.json({ ...f.me(f.credential), is_owner: true });
+      assert.fail(`Unexpected fixture application endpoint ${target.pathname}`);
+    } };
+  return { input, db, receipt, receiptPath, network, observed };
+}
+
+test('schema30和31回填使用各自真实receipt、Service manifest和在线schema', async t => {
+  for (const schemaVersion of [30, 31]) {
+    const f = await schemaFixture(t, schemaVersion);
+    const result = await inspectTrendBackfill(f.input);
+    assert.equal(result.target.schema_version, schemaVersion);
+    assert.equal(result.pending.pending_jobs, 0);
+    assert.equal(result.usage.rows_written, 0);
+  }
+});
+
+test('未知schema及receipt/Service schema不一致在发出请求前拒绝', async t => {
+  const unsupported = await schemaFixture(t, 32, { manifestVersion: 31 });
+  await assert.rejects(inspectTrendBackfill(unsupported.input), { code: 'TREND_BACKFILL_RECEIPT_DRIFT' });
+  assert.equal(unsupported.network.length, 0);
+  const mismatch = await schemaFixture(t, 31, { manifestVersion: 30 });
+  await assert.rejects(inspectTrendBackfill(mismatch.input), { code: 'TREND_BACKFILL_SOURCE_REQUIRED' });
+  assert.equal(mismatch.network.length, 0);
+});
+
+test('schema31目标要求D1、health和meta精确匹配，不能沿用schema30读回', async t => {
+  for (const field of ['d1', 'health', 'meta']) {
+    const f = await schemaFixture(t, 31);
+    if (field === 'd1') f.db.exec('UPDATE instance_meta SET schema_version=32');
+    else f.observed[field] = 30;
+    await assert.rejects(inspectTrendBackfill(f.input), error => error.code === 'TREND_BACKFILL_STOPPED'
+      && error.details.reason === (field === 'd1' ? 'migration_ledger_drift' : 'instance_identity_drift'));
+    assert.ok(f.network.every(request => request.method === 'GET' || request.path.endsWith('/query')));
+  }
+});
+
+test('schema30计划不能在31目标执行或恢复，预算与来源不会隐式改写', async t => {
+  const f = await schemaFixture(t, 31), operationId = randomUUID(), taskId = 'isolated-schema-plan';
+  const created = await createTrendBackfillPlan({ ...f.input, operationId, taskId, budget: { batchSize: 2, maxPages: 3 } });
+  const plan = structuredClone(created.plan); plan.target.schema_version = 30;
+  const retained = structuredClone(plan), requestCount = f.network.length;
+  const input = { ...f.input, operationId, taskId, plan, authorization: { instance_id: f.input.instanceId, operation_id: operationId, task_id: taskId, plan_digest: canonicalDigest(plan) } };
+  await assert.rejects(runTrendBackfill(input), { code: 'TREND_BACKFILL_PLAN_DRIFT' });
+  await assert.rejects(recoverTrendBackfill(input), { code: 'TREND_BACKFILL_PLAN_DRIFT' });
+  assert.equal(f.network.length, requestCount, 'stale schema plans cause no additional remote requests or writes');
+  assert.deepEqual(plan, retained);
+  assert.equal(created.plan.target.schema_version, 31);
+  assert.equal(created.plan.budget.batchSize, 2); assert.equal(created.plan.budget.maxPages, 3);
 });

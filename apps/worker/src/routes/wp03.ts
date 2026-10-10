@@ -105,12 +105,13 @@ export function registerWp03Routes(router: Router): Router {
     .post("/api/v1/workspaces", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
-      const value = await body(request, ["display_name"], ["display_name"]);
+      const value = await body(request, ["display_name", "description"], ["display_name"]);
       return jsonResponse(await createWorkspace(
         env.DB,
         request,
         auth,
         value.display_name as JsonValue,
+        value.description as JsonValue | undefined,
         context.startedAt,
       ), context.requestId);
     })
@@ -127,12 +128,13 @@ export function registerWp03Routes(router: Router): Router {
     .patch("/api/v1/workspaces/{workspace_id}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
-      const value = await body(request, ["display_name", "expected_version"], ["display_name", "expected_version"]);
+      const value = await body(request, ["display_name", "description", "expected_version"], ["expected_version"]);
       return jsonResponse(await updateWorkspace(
         env.DB,
         auth,
         path(context, "workspace_id"),
-        value.display_name as JsonValue,
+        value.display_name as JsonValue | undefined,
+        value.description as JsonValue | undefined,
         requireVersion(value.expected_version as JsonValue),
         context.startedAt,
       ), context.requestId);

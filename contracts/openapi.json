@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.12.0-rc.10",
+    "version": "1.12.0-rc.11",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -2245,7 +2245,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateDisplayNameRequest"
+                "$ref": "#/components/schemas/UpdateWorkspaceRequest"
               }
             }
           }
@@ -5644,7 +5644,7 @@
           "issues"
         ],
         "summary": "Get Workspace Issue Trends",
-        "description": "Read UTC daily Issue stock and flow in the exact returned scope under current Project authorization and Session scope. Parent and child Issues count independently. Stock excludes soft-deleted Issues; unfinished is backlog, todo and in_progress, with canceled separate from done. Flow counts original creation and transitions into done; completing again after reopening counts again. Restore and milestone membership changes are not creation or completion. The current day is partial through observed_at. Persisted history is backfilled where recoverable; unknown stock or flow is null, never fabricated zero. projects reports separate stock_from/flow_from and pending/complete/partial coverage. Workspace aggregate values are null when any included Project lacks that metric's coverage. Archived Projects are excluded and purged Projects cannot be recovered. No pagination or ordinary Issue filters are accepted; unknown parameters are rejected. Requires issue_trends capability; clients must not scan Issue lists to reconstruct history.",
+        "description": "Read UTC daily Issue stock and flow in the exact returned scope under current Project authorization and Session scope. Parent and child Issues count independently. Stock excludes soft-deleted Issues; unfinished is backlog, todo and in_progress, with canceled separate from done. Flow counts original creation and transitions into done; completing again after reopening counts again. Restore and milestone membership changes are not creation or completion. The current day is partial through observed_at. Persisted history is backfilled where recoverable; unknown stock or flow is null, never fabricated zero. projects reports separate stock_from/flow_from and pending/complete/partial coverage. Workspace aggregate values are null when any included Project lacks that metric's coverage. Archived Projects are excluded and purged Projects cannot be recovered. No pagination or ordinary Issue filters are accepted; unknown parameters are rejected. Requires issue_trends capability; clients must not scan Issue lists to reconstruct history. Workspace trends require current instance Owner or Workspace administrator authorization and a Session that permits Workspace management. Fixed Project/Issue Sessions and Project-bound MCP panels cannot read this aggregate. It includes every currently active Project in the Workspace, without Project selection; an empty Workspace is valid and more than 100 active Projects is rejected explicitly. Current management authorization is checked inside the aggregate read and again before returning it.",
         "security": [
           {
             "BearerCredential": []
@@ -5674,23 +5674,6 @@
               "default": 30
             },
             "description": "UTC calendar days including the unfinished current day. Only one days parameter is accepted."
-          },
-          {
-            "name": "project",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 100,
-              "uniqueItems": true,
-              "items": {
-                "$ref": "#/components/schemas/Uuid"
-              }
-            },
-            "style": "form",
-            "explode": true,
-            "description": "Optional repeated exact Project UUIDs in this Workspace. Omission uses currently readable active Projects intersected with the authenticated Session scope. Explicit inaccessible targets are rejected."
           }
         ],
         "responses": {
@@ -5739,7 +5722,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "project_reader",
+        "x-cfkanban-permission": "workspace_administrator",
         "x-cfkanban-additional-query-parameters": false
       }
     },
@@ -15718,24 +15701,6 @@
           }
         }
       },
-      "UpdateDisplayNameRequest": {
-        "type": "object",
-        "required": [
-          "expected_version",
-          "display_name"
-        ],
-        "properties": {
-          "expected_version": {
-            "$ref": "#/components/schemas/Version"
-          },
-          "display_name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          }
-        },
-        "additionalProperties": false
-      },
       "CreateWorkspaceRequest": {
         "type": "object",
         "required": [
@@ -15746,6 +15711,48 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 128
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Workspace description. Omitted values default to null. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateWorkspaceRequest": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "minProperties": 2,
+        "properties": {
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Workspace description. Omit to preserve; null clears. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -27805,6 +27812,7 @@
           "allowed_actions",
           "created_at",
           "deleted_at",
+          "description",
           "display_name",
           "id",
           "restorable",
@@ -27829,6 +27837,18 @@
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Workspace description. Null clears the description. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "display_name": {
             "type": "string",
@@ -27859,6 +27879,7 @@
           "allowed_actions",
           "created_at",
           "deleted_at",
+          "description",
           "display_name",
           "id",
           "restorable",
@@ -27883,6 +27904,18 @@
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Workspace description. Null clears the description. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "display_name": {
             "type": "string",
@@ -27913,6 +27946,7 @@
           "allowed_actions",
           "created_at",
           "deleted_at",
+          "description",
           "display_name",
           "id",
           "restorable",
@@ -27938,6 +27972,18 @@
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Workspace description. Null clears the description. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "display_name": {
             "type": "string",
@@ -27988,6 +28034,7 @@
           "allowed_actions",
           "created_at",
           "deleted_at",
+          "description",
           "display_name",
           "id",
           "restorable",
@@ -28013,6 +28060,18 @@
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Workspace description. Null clears the description. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "display_name": {
             "type": "string",

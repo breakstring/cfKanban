@@ -76,4 +76,4 @@ Use `--q-mode typed` to match titles (at least two characters) or number prefixe
 
 ## Issue trends
 
-Read authorized UTC daily stock and creation/completion operations with `issue trends --days 30` or `workspace issue trends --days 30`. Add one milestone UUID to Project trends, or repeat `--project` to narrow Workspace scope. The current day is partial, and unavailable history is null rather than zero. See [Issue trends](../usage/trends.md) for date, scope and coverage semantics.
+Read authorized UTC daily stock and creation/completion operations with `issue trends --days 30` or `workspace issue trends --days 30`. Add one milestone UUID to Project trends. Workspace trends require Owner or Workspace administrator access and cover every unarchived child Project, without selection. The current day is partial, and unavailable history is null rather than zero. See [Issue trends](../usage/trends.md) for date, scope and coverage semantics.

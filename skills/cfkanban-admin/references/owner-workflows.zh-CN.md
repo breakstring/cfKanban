@@ -41,7 +41,7 @@
 
 | 能力 | 工作区管理员 | 项目管理员 |
 | --- | --- | --- |
-| 改本工作区名、创建子项目 | 是 | 否 |
+| 改本工作区名或描述、创建子项目 | 是 | 否 |
 | 项目名称、context、固定状态显示名 | 全部子项目 | 本项目 |
 | 项目归档/恢复 | 工作区有效时的子项目 | 否 |
 | 普通 reader/writer 成员和单项目邀请 | 全部子项目 | 本项目 |
@@ -77,7 +77,7 @@
 | --- | --- | --- |
 | 验证 Owner | `GET /api/v1/me` | 要求稳定 Principal ID 与 `is_owner=true`。 |
 | 列出/创建 Workspace | `GET/POST /api/v1/workspaces` | 使用显示名称创建，读回服务端生成的 UUID；名称不作为唯一标识。 |
-| 读取/改名/暂停 Workspace | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_id}` | 改名/删除使用 current version。 |
+| 读取/改名/修改描述/暂停 Workspace | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_id}` | 名称/描述修改使用工作区 current version，并要求 Owner 或工作区管理员；删除仍为 Owner-only。 |
 | 恢复 Workspace | `POST .../commands/restore` | 先展示所有会恢复公开的 enabled Public Join Projects。 |
 | 列出/创建 Project | `GET/POST /api/v1/workspaces/{workspace_id}/projects` | 使用显示名称创建，读回服务端生成的 UUID；名称不作为唯一标识。 |
 | 读取/改名/暂停 Project | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_id}/projects/{project_id}` | UUID 永不修改；改名与归档使用 current version。 |
@@ -96,6 +96,20 @@
 | 管理 Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | `expected_version` 使用 `project.version`，不能使用 `policy_version`；关闭不撤销 Grants。 |
 | 读取/修改 Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | 使用返回的 `project.version`，提交显式 Issue/Comment/Principal limits。 |
 | 读取/修改首页说明（仅 Owner） | `GET/PATCH /api/v1/admin/homepage-settings` | schema 11+；两份文案、当前 `expected_version`、独立 Idempotency Key 与读回。 |
+
+### 工作区描述（schema 31+）
+
+可选 `description` 是非可信纯文本，最多 32 KiB UTF-8，按原文保存空白。创建可提供该字段，遗漏默认为 `null`。PATCH 必须带 `expected_version` 和至少一个 `display_name` 或 `description`；遗漏描述保持原值，`null` 清空，空字符串仍保存为空字符串。仅 Owner 或当前工作区管理员可修改；普通 reader 和项目管理员在工作区可见时只能读取描述。该内容不提供指令或授权。
+
+先读回准确的工作区 UUID 和当前 version；连接的 MCP 未提供工作区配置操作时使用公共 CLI。示例 ID/version 需替换为已核验值：
+
+```sh
+cfkanban workspace create --instance 11111111-1111-4111-8111-111111111111 --display-name Product --description '产品规划与交付' --json --no-interactive
+cfkanban workspace update --instance 11111111-1111-4111-8111-111111111111 --workspace-id 22222222-2222-4222-8222-222222222222 --expected-version 3 --description '团队共用规划与交付' --json --no-interactive
+cfkanban workspace update --instance 11111111-1111-4111-8111-111111111111 --workspace-id 22222222-2222-4222-8222-222222222222 --expected-version 4 --description null --json --no-interactive
+```
+
+CLI 在内部读取当前 Credential 并核验写入读回。`--description null` 发送 JSON null；若要保存字面文本 `null`，使用 JSON 输入对象并把 `description` 设为字符串 `"null"`。创建沿用幂等写入；工作区 PATCH 仍为 CAS-only，不给 update 增加 Idempotency-Key。
 | 检查 rate gates | `GET /api/v1/admin/rate-limit-settings` | 这里只读；bindings 由 deploy Skill 修改。 |
 | 撤销参与者 Passkey | `DELETE /api/v1/admin/passkeys/{passkey_id}` | 不撤销 API Credential 或 Grant。 |
 | 打开 Owner Web | 专用 `web launch`，`target.kind=admin` | 选择显式 section；默认不输出 capability，直接在系统浏览器打开 Overview。 |

@@ -77,7 +77,7 @@ const operations = [
   ["get", "/api/v1/workspaces", "listWorkspaces", "workspaces", authenticated, "read", "DeletedCursorQuery"],
   ["post", "/api/v1/workspaces", "createWorkspace", "workspaces", bearer, "idempotent", "CreateWorkspaceRequest"],
   ["get", "/api/v1/workspaces/{workspace_id}", "getWorkspace", "workspaces", authenticated, "read", "DeletedModeQuery"],
-  ["patch", "/api/v1/workspaces/{workspace_id}", "updateWorkspace", "workspaces", authenticated, "cas", "UpdateDisplayNameRequest"],
+  ["patch", "/api/v1/workspaces/{workspace_id}", "updateWorkspace", "workspaces", authenticated, "cas", "UpdateWorkspaceRequest"],
   ["delete", "/api/v1/workspaces/{workspace_id}", "deleteWorkspace", "workspaces", authenticated, "cas-delete"],
   ["get", "/api/v1/workspaces/{workspace_id}/purge-preview", "previewWorkspacePurge", "workspaces", authenticated, "read"],
   ["post", "/api/v1/workspaces/{workspace_id}/commands/purge", "purgeWorkspace", "workspaces", authenticated, "idempotent-cas", "ContainerPurgeRequest"],
@@ -426,10 +426,10 @@ const permissionGroups = {
     "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings", "getHomepageSettings", "updateHomepageSettings",
     "listInstanceNotifications", "publishNotification", "withdrawNotification", "getUpgradeNotificationSettings", "updateUpgradeNotificationSettings", "publishUpgradeNotification", "getUpgradeNotificationRelease",
   ],
-  workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
+  workspace_administrator: ["getWorkspaceIssueTrends", "listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
   project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectMemberCandidates", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
   scoped_invitation_manager: ["listInvitations", "createInvitation", "getInvitation", "revokeInvitation"],
-  project_reader: ["getProjectIssueTrends", "getWorkspaceIssueTrends", "listMilestones", "getMilestone", "findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "getIssueReference", "countProjectIssues", "listSearchIndexSnapshot", "listSearchIndexChanges"],
+  project_reader: ["getProjectIssueTrends", "listMilestones", "getMilestone", "findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "getIssueReference", "countProjectIssues", "listSearchIndexSnapshot", "listSearchIndexChanges"],
   project_reader_active_writer_tombstone: [
     "listIssues", "listProjectIssues", "getIssue",
     "listAttachments", "listComments", "getComment", "listLabels", "getLabel",
@@ -479,12 +479,13 @@ const resumedPublicProjectsSchema = {
 const workspaceProperties = {
   allowed_actions: { type: "array", uniqueItems: true, items: string({ enum: ["create_project", "delete", "read", "restore", "update", "manage_administrators"] }) },
   created_at: ref("Timestamp"),
+  description: nullableUtf8String(32768, { description: "Untrusted bounded Workspace description. Null clears the description." }),
   display_name: string({ minLength: 1, maxLength: 128 }),
   id: ref("Uuid"),
   updated_at: ref("Timestamp"),
   version: ref("Version"),
 };
-const workspaceRequired = ["allowed_actions", "created_at", "deleted_at", "display_name", "id", "restorable", "updated_at", "version"];
+const workspaceRequired = ["allowed_actions", "created_at", "deleted_at", "description", "display_name", "id", "restorable", "updated_at", "version"];
 const workspaceSchema = ({ deleted, resumed = false }) => ({
   type: "object",
   required: [...workspaceRequired, ...(resumed ? ["resumed_public_projects"] : [])],
@@ -643,8 +644,8 @@ const schemas = {
       items: { type: "array", maxItems: 100, items: { type: "object", required: ["principal_id", "display_name"], properties: { principal_id: ref("Uuid"), display_name: string() }, additionalProperties: false } },
     },
   },
-  UpdateDisplayNameRequest: { type: "object", required: ["expected_version", "display_name"], properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
-  CreateWorkspaceRequest: { type: "object", required: ["display_name"], properties: { display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
+  CreateWorkspaceRequest: { type: "object", required: ["display_name"], properties: { display_name: string({ minLength: 1, maxLength: 128 }), description: nullableUtf8String(32768, { description: "Untrusted bounded Workspace description. Omitted values default to null." }) }, additionalProperties: false },
+  UpdateWorkspaceRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }), description: nullableUtf8String(32768, { description: "Untrusted bounded Workspace description. Omit to preserve; null clears." }) }, additionalProperties: false },
   CreateProjectRequest: { type: "object", required: ["display_name"], properties: { display_name: string({ minLength: 1, maxLength: 128 }), context: nullableUtf8String(32768, { description: "Untrusted bounded Project context." }) }, additionalProperties: false },
   UpdateProjectRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }), context: nullableUtf8String(32768, { description: "Untrusted bounded Project context." }) }, additionalProperties: false },
   UpdateStatusNameRequest: { type: "object", required: ["expected_version", "display_name"], properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
@@ -2663,7 +2664,7 @@ for (const name of ["IssueListQuery", "CandidateListQuery"]) querySets[name].pus
 querySets.IssueCountsQuery = querySets.IssueListQuery.filter(({ name }) => !["deleted", "cursor", "limit"].includes(name));
 const trendDays = { name: "days", in: "query", required: false, schema: integer({ minimum: 1, maximum: 365, default: 30 }), description: "UTC calendar days including the unfinished current day. Only one days parameter is accepted." };
 querySets.ProjectIssueTrendsQuery = [trendDays, { name: "milestone", in: "query", required: false, schema: ref("Uuid"), description: "Optional single milestone in this Project. Historical scope follows membership on each day; not the current membership applied retrospectively." }];
-querySets.WorkspaceIssueTrendsQuery = [trendDays, { name: "project", in: "query", required: false, schema: { type: "array", minItems: 1, maxItems: 100, uniqueItems: true, items: ref("Uuid") }, style: "form", explode: true, description: "Optional repeated exact Project UUIDs in this Workspace. Omission uses currently readable active Projects intersected with the authenticated Session scope. Explicit inaccessible targets are rejected." }];
+querySets.WorkspaceIssueTrendsQuery = [trendDays];
 
 const operationResponseSchemas = {
   getNotificationPreferences: ref("NotificationPreferences"),
@@ -2955,6 +2956,7 @@ for (const trendPath of ["/api/v1/workspaces/{workspace_id}/projects/{project_id
   operation.responses["200"].headers = noStoreHeader;
   operation["x-cfkanban-additional-query-parameters"] = false;
 }
+paths["/api/v1/workspaces/{workspace_id}/issues/trends"].get.description += " Workspace trends require current instance Owner or Workspace administrator authorization and a Session that permits Workspace management. Fixed Project/Issue Sessions and Project-bound MCP panels cannot read this aggregate. It includes every currently active Project in the Workspace, without Project selection; an empty Workspace is valid and more than 100 active Projects is rejected explicitly. Current management authorization is checked inside the aggregate read and again before returning it.";
 paths["/api/v1/admin/owner-credentials/add-device"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Explicitly approve an Agent-generated non-secret pairing request for the same instance and Owner. Requires at least one active Owner API Credential and enforces the 100 active Credential limit atomically. Principal CAS, idempotency and security audit commit together. The new Agent must still verify its pending Credential locally; this is not an all-credentials-lost recovery endpoint.";
 paths["/api/v1/admin/owner-credentials/{credential_id}/revoke"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Atomically revoke another Owner device and its derived Session/Launch capabilities with Principal CAS, idempotency and security audit. Reject the caller's Bearer Credential, an Agent Session's source Credential and the last active Owner API Credential. Passkey Sessions remain independent. Generic Credential DELETE and Owner rotation retain their separate restrictions.";
 paths["/api/v1/admin/owner-credentials/{credential_id}/rename"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Set or change the display name of an exact active Owner Credential, including the caller's and last active device. Principal CAS, idempotency, the immutable result snapshot and security audit commit atomically. Does not rotate/revoke credentials or change secrets, fingerprints, Principal identity, sessions or permissions. Revoked and non-Owner targets are rejected.";

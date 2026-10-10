@@ -474,7 +474,7 @@ Service deployment bundle 中的 D1 migration manifest 不能只是一组按文�
 
 该原始 SQL 通过本地 SQLite 与固定 Wrangler splitter 验证，但远端 `/query` 返回 `incomplete input`，后续 schema 读回确认未部分应用。远端解析路径不等同于本地 splitter；本地 validator 通过不能证明远端解析器兼容。未加括号的 `CASE … END` 被远端误拆分是当前推断，不能把这一兼容变换推广为通用 SQL 修复入口；最终仍须以远端 ledger/schema 读回证明应用结果。
 
-此 schema 30 兼容路径在 RC9 的支持范围是既有实例从 schema 29 升至 30，以及已处于 schema 30 的无 migration 升级；不支持 schema 30 首次部署。默认 stable 的首次安装流程不受影响。schema 30 新装必须在创建计划及云端写入前拒绝，不能将公开升级的转换隐式套入首次部署；RC9 也不得凭旧 schema 30 初始部署 plan 继续云端写入。只读资源、migration/schema 读回仍可用于核实中断状态。首次部署所需的 migration 投影、摘要与恢复合同须单独冻结并验收后才能开放，不能临时改写已发布文件。
+此 schema 30 兼容路径在 RC9 的支持范围是既有实例从 schema 29 升至 30，以及已处于 schema 30 的无 migration 升级；不支持含 schema 30 迁移的首次部署（包括 schema 31）。默认 stable 的首次安装流程不受影响。包含 schema 30 迁移的新装（包括 schema 31）必须在创建计划及云端写入前拒绝，不能将公开升级的转换隐式套入首次部署；RC9 也不得凭旧 schema 30 初始部署 plan 继续云端写入。只读资源、migration/schema 读回仍可用于核实中断状态。首次部署所需的 migration 投影、摘要与恢复合同须单独冻结并验收后才能开放，不能临时改写已发布文件。
 
 该入口限定于已验证的公开升级 migration。Skill 生成的 migration checksum 与 Owner bootstrap SQL 继续使用原有受限文件路径，不把秘密送入命令参数；文件不得包含显式 `BEGIN`、`COMMIT`、`ROLLBACK` 或 `SAVEPOINT`。现有 bootstrap 读回及受保护重试、checksum 同 journal 缺行恢复条件保持不变。只读 SELECT readback 仍通过 `--command --json` 执行。
 

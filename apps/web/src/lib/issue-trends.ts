@@ -7,7 +7,6 @@ export type IssueTrendWindow = 30 | 90 | 365;
 export interface IssueTrendRequest {
   workspaceId: string;
   projectId?: string | undefined;
-  projectIds?: string[] | undefined;
   milestoneId?: string | undefined;
   days: IssueTrendWindow;
 }
@@ -29,31 +28,31 @@ export function canReadIssueTrends(session: WebSessionView, workspaceId: string,
   if (session.target?.kind === "issue") return false;
   if (!id(workspaceId) || (projectId !== undefined && !id(projectId))) return false;
   if (session.principal.is_owner && session.allowed_scope.kind === "instance") return true;
-  return issueTrendProjects(session, workspaceId).some(project => projectId === undefined || project.project_id === projectId);
+  if (projectId !== undefined) return issueTrendProjects(session, workspaceId).some(project => project.project_id === projectId);
+  if (session.allowed_scope.kind !== "workspace" && session.allowed_scope.kind !== "project_selection") return false;
+  if (session.allowed_scope.kind === "workspace" && session.allowed_scope.workspace_id !== workspaceId) return false;
+  if (session.principal.is_owner) return session.allowed_scope.kind === "workspace";
+  return (session.management_grants ?? []).some(grant => grant.principal_id === session.principal.id
+    && grant.workspace_id === workspaceId && grant.project_id === null && grant.revoked_at === null);
 }
 
 export function issueTrendsPath(request: IssueTrendRequest): string | null {
   if (!id(request.workspaceId) || ![30, 90, 365].includes(request.days)) return null;
   if (request.projectId !== undefined && !id(request.projectId)) return null;
   if (request.milestoneId !== undefined && (!request.projectId || !id(request.milestoneId))) return null;
-  const projects = [...new Set(request.projectIds ?? [])].sort();
-  if (projects.length > 100 || projects.some(value => !id(value)) || (request.projectId !== undefined && projects.length > 0)) return null;
   const params = new URLSearchParams({ days: String(request.days) });
   if (request.milestoneId) params.set("milestone", request.milestoneId);
-  for (const value of projects) params.append("project", value);
   const base = `/api/v1/workspaces/${encodeURIComponent(request.workspaceId)}`;
   return `${base}${request.projectId ? `/projects/${encodeURIComponent(request.projectId)}` : ""}/issues/trends?${params}`;
 }
 
-export function issueTrendsSelection(search: string): { days: IssueTrendWindow; milestoneId: string; projectIds: string[]; allProjects: boolean } {
+export function issueTrendsSelection(search: string): { days: IssueTrendWindow; milestoneId: string } {
   const params = new URLSearchParams(search);
   const rawDays = params.getAll("days");
   const days = rawDays.length === 1 && ["30", "90", "365"].includes(rawDays[0]!) ? Number(rawDays[0]) as IssueTrendWindow : 30;
   const rawMilestone = params.getAll("milestone");
   const milestoneId = rawMilestone.length === 1 && id(rawMilestone[0]) ? rawMilestone[0] : "all";
-  const rawProjects = params.getAll("project");
-  const projectIds = rawProjects.length <= 100 && rawProjects.every(id) ? [...new Set(rawProjects)].sort() : [];
-  return { days, milestoneId, projectIds, allProjects: rawProjects.length === 0 };
+  return { days, milestoneId };
 }
 
 export function isIssueTrends(value: unknown, request: IssueTrendRequest): value is IssueTrends {
@@ -65,7 +64,7 @@ export function isIssueTrends(value: unknown, request: IssueTrendRequest): value
     || value.scope.project_ids.length > 100 || new Set(value.scope.project_ids).size !== value.scope.project_ids.length
     || !Array.isArray(value.projects) || !Array.isArray(value.points) || value.points.length !== request.days) return false;
   const scopedIds = value.scope.project_ids as string[];
-  const expected = request.projectId ? [request.projectId] : request.projectIds?.length ? [...new Set(request.projectIds)].sort() : null;
+  const expected = request.projectId ? [request.projectId] : null;
   if (expected && JSON.stringify([...scopedIds].sort()) !== JSON.stringify([...expected].sort())) return false;
   if (value.projects.length !== scopedIds.length || new Set(value.projects.map(project => record(project) ? project.id : null)).size !== scopedIds.length) return false;
   if (!value.projects.every(project => record(project) && id(project.id) && scopedIds.includes(project.id)

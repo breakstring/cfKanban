@@ -2,6 +2,7 @@ import { requireUuid, timestamp } from "../domain/model.ts";
 import { WEB_SESSION_ABSOLUTE_LIFETIME_MS } from "../domain/web-session-policy.ts";
 import { aggregateTrendPoints, trendWindow, utcTrendDate, type TrendDelta } from "../domain/issue-trends.ts";
 import { buildCurrentAuthGuard, currentProjectRoleSql, resolveCurrentWorkspaceProjects, verifyCurrentAuth, type VisibleProject } from "../kernel/authorization.ts";
+import { buildManagementGuard, requireManagementAuthorization } from "../kernel/scoped-authorization.ts";
 import { ApiError, notFound, platformUnavailable, validationError } from "../kernel/errors.ts";
 import { cursorScopeMismatch } from "../kernel/cursor.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
@@ -13,32 +14,30 @@ interface TrendRow {
 interface TrendEnvelope { observed_at: number; projects_json: string }
 export interface TrendReadOptions { snapshotTime?: number }
 const scopeKey = (projects: readonly VisibleProject[]) => JSON.stringify(projects.map(project => [project.projectId, project.projectVersion, project.role]));
-function parameters(url: URL, projectLevel: boolean): { projectIds?: string[]; milestone: string | null } {
-  const allowed = new Set(projectLevel ? ["days", "milestone"] : ["days", "project"]);
+function parameters(url: URL, projectLevel: boolean): { milestone: string | null } {
+  const allowed = new Set(projectLevel ? ["days", "milestone"] : ["days"]);
   for (const key of url.searchParams.keys()) if (!allowed.has(key)) throw validationError("unsupported_query_option", { field: key });
-  const rawProjects = url.searchParams.getAll("project"), rawMilestones = url.searchParams.getAll("milestone");
-  if (rawProjects.length > 100) throw validationError("too_many_scope_filters", { field: "project", maximum: 100 });
+  const rawMilestones = url.searchParams.getAll("milestone");
   if (rawMilestones.length > 1) throw validationError("schema_validation_failed", { field: "milestone" });
-  return { ...(rawProjects.length === 0 ? {} : { projectIds: [...new Set(rawProjects.map(value => requireUuid(value, "project")))].sort() }),
-    milestone: rawMilestones.length === 0 ? null : requireUuid(rawMilestones[0]!, "milestone") };
+  return { milestone: rawMilestones.length === 0 ? null : requireUuid(rawMilestones[0]!, "milestone") };
 }
 
 async function readTrends(db: D1Database, auth: AuthContext, workspaceValue: JsonValue, projectValue: JsonValue | undefined, url: URL, now: number, options: TrendReadOptions) {
   const workspaceId = requireUuid(workspaceValue, "workspace_id"), projectId = projectValue === undefined ? undefined : requireUuid(projectValue, "project_id");
   const filter = parameters(url, projectId !== undefined), requestedWindow = trendWindow(url, now);
   if (options.snapshotTime !== undefined && (!Number.isSafeInteger(options.snapshotTime) || options.snapshotTime < 0)) throw new RangeError("invalid trend observation clock");
-  const requested = projectId === undefined ? filter.projectIds : [projectId];
+  const requested = projectId === undefined ? undefined : [projectId];
+  const managementScope = { workspaceId };
   const authorizationTime = Date.now();
   await verifyCurrentAuth(db, auth, authorizationTime);
   if (auth.kind === "cookie" && auth.targetKind === "issue") throw notFound();
   try {
+    if (projectId === undefined) await requireManagementAuthorization(db, auth, managementScope, "manage_workspace", authorizationTime);
     const projects = await resolveCurrentWorkspaceProjects(db, auth, workspaceId, authorizationTime, requested);
     if (projects.length > 100) throw validationError("too_many_trend_projects", { maximum: 100 });
     if (requested !== undefined && projects.length !== requested.length) throw notFound();
     if (projects.length === 0) {
-      // Owner 可读取空 Workspace；普通成员必须有至少一个可见 Project。
-      if (!auth.isOwner || auth.kind === "cookie" && auth.targetKind !== "admin"
-        && !(auth.targetKind === "workspace" && auth.target.workspace_id === workspaceId)) throw notFound();
+      if (projectId !== undefined) throw notFound();
       const exists = await db.prepare("SELECT 1 FROM workspaces WHERE id=?1 AND deleted_at IS NULL AND purged_at IS NULL").bind(workspaceId).first();
       if (exists === null) throw notFound();
     }
@@ -46,7 +45,9 @@ async function readTrends(db: D1Database, auth: AuthContext, workspaceValue: Jso
       const exists = await db.prepare("SELECT 1 FROM milestones WHERE id=?1 AND project_id=?2").bind(filter.milestone, projectId!).first();
       if (exists === null) throw notFound();
     }
-    const ids = projects.map(project => project.projectId), guard = buildCurrentAuthGuard(auth, authorizationTime, 7);
+    const ids = projects.map(project => project.projectId), guard = projectId === undefined
+      ? buildManagementGuard(auth, authorizationTime, 7, managementScope, "manage_workspace")
+      : buildCurrentAuthGuard(auth, authorizationTime, 7);
     // SQLite 的 now 在同一次 step 中固定；存量、日期范围与观测时间共享一个快照。
     const envelope = await db.prepare(`WITH trend_clock AS MATERIALIZED (
       SELECT CASE WHEN ?4 IS NULL THEN CAST(strftime('%s','now') AS INTEGER)*1000
@@ -85,8 +86,13 @@ async function readTrends(db: D1Database, auth: AuthContext, workspaceValue: Jso
     if (requested !== undefined && current.length !== requested.length) throw notFound();
     if (scopeKey(current) !== scopeKey(projects)) throw cursorScopeMismatch();
     if (rows.length !== ids.length) throw notFound();
-    if (ids.length === 0 && await db.prepare("SELECT 1 FROM workspaces WHERE id=?1 AND deleted_at IS NULL AND purged_at IS NULL")
-      .bind(workspaceId).first() === null) throw notFound();
+    if (projectId === undefined) {
+      // 共用管理 guard 允许 Owner 恢复归档容器；趋势必须在同一读取中额外核验活跃状态。
+      const finalGuard = buildManagementGuard(auth, currentTime, 2, managementScope, "manage_workspace");
+      const allowed = await db.prepare(`SELECT 1 FROM workspaces WHERE id=?1 AND deleted_at IS NULL AND purged_at IS NULL
+        AND ${finalGuard.sql}`).bind(workspaceId, ...finalGuard.values).first();
+      if (allowed === null) throw notFound();
+    }
     return { timezone: "UTC", from_date: window.from, to_date: window.to, observed_at: timestamp(observedAt),
       scope: { workspace_id: workspaceId, project_ids: ids, milestone_id: filter.milestone },
       projects: rows.map(row => ({ id: row.id, display_name: row.display_name, stock_from: row.stock_from,

@@ -66,7 +66,7 @@ const scopedSession = { ...ownerSession, principal: { ...ownerSession.principal,
 function fixture(session = ownerSession) {
   const backend = {
     session: structuredClone(session), calls: [], intercept: null,
-    workspace: { id: workspaceId, display_name: "Team", version: 3, deleted_at: null, allowed_actions: ["read", "update", "create_project", "manage_administrators"] },
+    workspace: { id: workspaceId, display_name: "Team", description: "Saved workspace description", version: 3, deleted_at: null, allowed_actions: ["read", "update", "create_project", "manage_administrators"] },
     project: { id: projectId, workspace_id: workspaceId, workspace_display_name: "Team", display_name: "Project", context: "Saved project context", version: 3, deleted_at: null, allowed_actions: ["read", "update", "manage_status_names", "manage_administrators", "manage_members"] },
     settings: { version: 1, notice_en: "Saved English", notice_zh_cn: "原中文" },
     statusNames: Object.fromEntries(statusKeys.map(key => [key, key === "todo" ? "To do" : key])),
@@ -97,6 +97,10 @@ function fixture(session = ownerSession) {
     if (pathname === projectPath && init.method === "PATCH") {
       backend.project = { ...backend.project, display_name: call.body.display_name, context: call.body.context, version: backend.project.version + 1 };
       return Response.json({ resource: backend.project, event_cursor: "saved-project", idempotent_replay: false });
+    }
+    if (pathname === workspacePath && init.method === "PATCH") {
+      backend.workspace = { ...backend.workspace, ...call.body, version: backend.workspace.version + 1 };
+      return Response.json({ resource: backend.workspace, event_cursor: "saved-workspace", idempotent_replay: false });
     }
     if (init.method === "POST" && ["/api/v1/workspaces", projectCollection].includes(pathname)) return Response.json({ resource: { id: "new-container", display_name: call.body.display_name }, event_cursor: "created", idempotent_replay: false });
     assert.fail(`Unexpected write during test: ${init.method} ${pathname}`);
@@ -139,6 +143,61 @@ test("Owner more menus honor current container actions and keep opening or cance
   }
 });
 async function scopedPage(project = true) { const view = mount(Scoped, { workspaceId, ...(project ? { projectId } : {}), session: scopedSession }); await flush(); assert.equal(view.state.loading, false); return view; }
+
+test("workspace description draft restores with current CAS and untouched name, then saves and clears", async () => {
+  const backend = start(scopedSession);
+  const first = await scopedPage(false);
+  first.state.draft.description = "Typed workspace description";
+  captureSessionTextDrafts(ownerId);
+  assert.deepEqual(retained("scoped-container-settings").fields, { description: "Typed workspace description" });
+  first.unmount();
+  backend.workspace.display_name = "Fresh workspace name"; backend.workspace.version = 4;
+  const next = await scopedPage(false); const before = backend.calls.length;
+  assert.equal(await restoreSessionTextDraft(retained("scoped-container-settings").id, ownerId), true);
+  assert.equal(next.state.draft.display_name, "Fresh workspace name");
+  assert.equal(next.state.draft.description, "Typed workspace description");
+  assert.ok(backend.calls.slice(before).every(call => call.method === "GET"));
+  next.state.saveSettings(); await flush();
+  const save = backend.calls.findLast(call => call.method === "PATCH");
+  assert.deepEqual(save.body, { display_name: "Fresh workspace name", expected_version: 4, description: "Typed workspace description" });
+  captureSessionTextDrafts(ownerId); assert.equal(retainedSessionTextDrafts.value.length, 0);
+  next.state.draft.description = ""; next.state.saveSettings(); await flush();
+  assert.equal(backend.calls.findLast(call => call.method === "PATCH").body.description, null);
+  assert.equal(backend.workspace.description, null);
+});
+
+test("Workspace trends settings tab needs management scope and avoids management list reads", async () => {
+  const grant = { id: "workspace-admin", principal_id: ownerId, workspace_id: workspaceId, project_id: null, revoked_at: null, version: 1, generation: "one" };
+  const admin = { ...scopedSession, management_grants: [grant] };
+  const backend = start(admin);
+  const view = mount(Scoped, { workspaceId, session: admin }); await flush();
+  assert.equal(view.state.canReadWorkspaceTrends, true);
+  assert.ok(view.state.workspaceSections.includes("trends"));
+  const before = backend.calls.length;
+  view.state.selectSection("trends"); await flush();
+  assert.deepEqual(backend.calls.slice(before).map(call => call.path), [workspacePath]);
+  backend.workspace.allowed_actions = ["read"]; await view.state.load();
+  assert.equal(view.state.canReadWorkspaceTrends, false);
+  assert.ok(!view.state.workspaceSections.includes("trends"));
+  view.unmount();
+  backend.workspace.allowed_actions = ["read", "update"];
+  const fixed = mount(Scoped, { workspaceId, session: { ...admin, allowed_scope: { kind: "project", project_id: projectId, projects: scopedSession.allowed_scope.projects } } });
+  await flush(); assert.equal(fixed.state.canReadWorkspaceTrends, false);
+  assert.ok(!fixed.state.workspaceSections.includes("trends"));
+});
+
+test("legacy Service workspace responses omit description writes and Owner creation retains its description", async () => {
+  const backend = start(scopedSession); delete backend.workspace.description;
+  const scoped = await scopedPage(false);
+  assert.equal(scoped.state.supportsDescription, false);
+  scoped.state.draft.display_name = "Renamed"; scoped.state.saveSettings(); await flush();
+  assert.ok(!Object.hasOwn(backend.calls.findLast(call => call.method === "PATCH").body, "description"));
+  scoped.unmount();
+  start(); const owner = await ownerPage();
+  owner.state.showWorkspace = true; owner.state.workspaceForm.description = "New workspace description";
+  captureSessionTextDrafts(ownerId);
+  assert.deepEqual(retained("owner-workspace-create").fields, { description: "New workspace description" });
+});
 async function homepagePage() { const view = mount(Homepage); await flush(); assert.ok(view.state.draft.current); return view; }
 
 test("actual management getters retain only changed business text and stable IDs, excluding confirmations and sensitive fields", async () => {

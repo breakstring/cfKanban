@@ -4,6 +4,7 @@ import UButton from "@nuxt/ui/components/Button.vue";
 import UInput from "@nuxt/ui/components/Input.vue";
 import USelect from "@nuxt/ui/components/Select.vue";
 import UTextarea from "@nuxt/ui/components/Textarea.vue";
+import ProjectViewIcon from "../components/ProjectViewIcon.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
@@ -170,10 +171,10 @@ onUnmounted(() => { generation += 1; projectRequest += 1; page.reset(); });
       <div class="board-toolbar-actions"><UButton v-if="canWrite" color="primary" type="button" :disabled="busy || !!pending || !!conflict" @click="openEditor()"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>{{ ui('New milestone', '新建里程碑') }}</UButton></div>
       <div class="board-utility-bar">
         <div class="board-view-bar" role="group" :aria-label="ui('Project view', '项目视图')">
-          <button class="board-view-label board-view-inactive" type="button" :aria-pressed="false" @click="navigate(boardPath(workspaceId, projectId, boardOnly))"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ ui('Board', '看板') }}</button>
-          <button class="board-view-label board-view-inactive" type="button" :aria-pressed="false" @click="navigate(boardPath(workspaceId, projectId, { ...boardView, view: 'list' }))"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4h10M7 10h10M7 16h10M3 4h.01M3 10h.01M3 16h.01" /></svg>{{ ui('List', '列表') }}</button>
-          <button class="board-view-label" type="button" :aria-pressed="true" aria-current="page">{{ ui('Milestones', '里程碑') }}</button>
-          <button v-if="canReadIssueTrends(session, workspaceId, projectId)" class="board-view-label board-view-inactive" type="button" @click="viewTrends()">{{ ui('Trends', '趋势') }}</button>
+          <button class="board-view-label board-view-inactive" type="button" :aria-pressed="false" @click="navigate(boardPath(workspaceId, projectId, boardOnly))"><ProjectViewIcon view="board" />{{ ui('Board', '看板') }}</button>
+          <button class="board-view-label board-view-inactive" type="button" :aria-pressed="false" @click="navigate(boardPath(workspaceId, projectId, { ...boardView, view: 'list' }))"><ProjectViewIcon view="list" />{{ ui('List', '列表') }}</button>
+          <button class="board-view-label" type="button" :aria-pressed="true" aria-current="page"><ProjectViewIcon view="milestones" />{{ ui('Milestones', '里程碑') }}</button>
+          <button v-if="canReadIssueTrends(session, workspaceId, projectId)" class="board-view-label board-view-inactive" type="button" @click="viewTrends()"><ProjectViewIcon view="trends" />{{ ui('Trends', '趋势') }}</button>
         </div>
         <div class="board-filter-controls" role="group" :aria-label="ui('Milestone filters', '里程碑筛选')">
           <USelect v-model="status" :disabled="busy || !!pending" :items="[{ value: 'all', label: ui('All milestones', '全部里程碑') }, { value: 'open', label: ui('Open', '开放') }, { value: 'closed', label: ui('Closed', '已关闭') }]" :aria-label="ui('Milestone status', '里程碑状态')" />

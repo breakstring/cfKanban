@@ -144,9 +144,16 @@ test('public CLI uses the isolated real Worker for Owner configuration, Issue li
     const profile = await run(['profile', 'show'], { operationId: 'getMe' });
     assert.equal(profile.data.id, owner.principalId);
     assert.equal(profile.data.is_owner, true);
-    workspace = resource(await run(['workspace', 'create', '--display-name', 'CLI workspace'], { operationId: 'createWorkspace' }));
+    workspace = resource(await run(['workspace', 'create', '--display-name', 'CLI workspace', '--description', '  CLI 工作区描述\n  '], { operationId: 'createWorkspace' }));
+    assert.equal(workspace.description, '  CLI 工作区描述\n  ');
     const renamedWorkspace = await run(['workspace', 'update', '--workspace-id', workspace.id, '--display-name', 'CLI workspace configured'], { operationId: 'updateWorkspace' });
     assert.equal(renamedWorkspace.readback.data.display_name, 'CLI workspace configured');
+    assert.equal(renamedWorkspace.readback.data.description, workspace.description);
+    const describedWorkspace = await run(['workspace', 'update', '--workspace-id', workspace.id, '--description', 'Updated description'], { operationId: 'updateWorkspace' });
+    assert.equal(describedWorkspace.readback.data.display_name, 'CLI workspace configured');
+    assert.equal(describedWorkspace.readback.data.description, 'Updated description');
+    const clearedWorkspace = await run(['workspace', 'update', '--workspace-id', workspace.id, '--description', 'null'], { operationId: 'updateWorkspace' });
+    assert.equal(clearedWorkspace.readback.data.description, null);
     project = resource(await run(['project', 'create', '--workspace-id', workspace.id, '--display-name', 'CLI project'], { operationId: 'createProject' }));
     const configuredProject = await run(['project', 'update', '--workspace-id', workspace.id, '--project-id', project.id, '--context', '## Local fixture\n\nVerified public CLI project context.'], { operationId: 'updateProject' });
     assert.match(configuredProject.readback.data.context, /Verified public CLI/);
@@ -229,6 +236,7 @@ test('public CLI uses the isolated real Worker for Owner configuration, Issue li
       [['comment', 'create', '--identifier', issue.identifier, '--body-stdin'], 'createComment'],
       [['project', 'update', '--workspace-id', workspace.id, '--project-id', project.id, '--context', 'Reader rejected'], 'updateProject'],
       [['workspace', 'create', '--display-name', 'Reader rejected'], 'createWorkspace'],
+      [['workspace', 'update', '--workspace-id', workspace.id, '--description', 'Reader rejected'], 'updateWorkspace'],
     ]) {
       const denied = await read(argv, { operationId, code: EXIT_CODES.authorization, body: 'Reader rejected' });
       assert.equal(denied.status, 403);

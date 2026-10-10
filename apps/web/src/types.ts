@@ -331,6 +331,7 @@ export interface RateLimitSettings {
 export interface ContainerResource {
   allowed_actions?: string[];
   context?: string;
+  description?: string | null;
   created_at?: string;
   deleted_at: string | null;
   display_name: string;

@@ -21,6 +21,14 @@ const reader={...auth,isOwner:false,principalId:member,credentialId:memberCreden
 const request=(key=randomUUID())=>new Request(`${origin}/api/v1/test`,{method:'POST',headers:{'idempotency-key':key,authorization:`Bearer ${token}`}});
 const url=(params={})=>{const value=new URL(`${origin}/api/v1/test`);for(const[key,items]of Object.entries(params))for(const item of Array.isArray(items)?items:[items])value.searchParams.append(key,item);return value;};
 const code=value=>error=>error.code===value;
+async function administrator(workspaceId=workspace,projectId=null){
+  const existing=await db.prepare('SELECT id FROM scoped_administrator_grants WHERE principal_id=?1 AND workspace_id=?2 AND project_id IS ?3').bind(member,workspaceId,projectId).first();
+  const id=existing?.id??randomUUID(),generation=randomUUID();
+  if(existing===null)await db.prepare('INSERT INTO scoped_administrator_grants(id,principal_id,workspace_id,project_id,generation,created_at,updated_at,created_operation_id) VALUES(?1,?2,?3,?4,?5,1,1,?6)').bind(id,member,workspaceId,projectId,generation,randomUUID()).run();
+  else await db.prepare('UPDATE scoped_administrator_grants SET generation=?1,version=version+1,revoked_at=NULL,revoked_by_principal_id=NULL WHERE id=?2').bind(generation,id).run();
+  return {...reader,managementGrants:[await db.prepare('SELECT * FROM scoped_administrator_grants WHERE id=?1').bind(id).first()]};
+}
+const revokeAdministrator=context=>db.prepare('UPDATE scoped_administrator_grants SET revoked_at=?1,revoked_by_principal_id=?2 WHERE id=?3').bind(now,owner,context.managementGrants[0].id).run();
 let db, now, dayStart;
 const at=offset=>dayStart+offset*86400000+43200000;
 const projectTrends=(id=project,params={},context=auth,database=db)=>getProjectIssueTrends(database,context,workspace,id,url(params),now);
@@ -69,13 +77,11 @@ test('initial done is stock only; parent and child count independently',async()=
   await db.prepare("INSERT INTO issue_relations(id,workspace_id,kind,source_issue_id,target_issue_id,source_project_id,target_project_id,created_at,created_by_principal_id,created_operation_id) VALUES(?1,?2,'parent',?3,?4,?5,?5,?6,?7,?8)").bind(randomUUID(),workspace,child.id,parent.id,peer,now,owner,randomUUID()).run();
   const latest=(await projectTrends(peer,{days:'2'})).points.at(-1);assert.equal(latest.total,2);assert.equal(latest.done,1);assert.equal(latest.completed,0);assert.equal(latest.created,1);
 });
-test('workspace scope is current visible intersection, explicit unknown targets fail and unsupported filters are rejected',async()=>{
-  const visible=await workspaceTrends({days:'5'},reader);assert.deepEqual(visible.scope.project_ids,[project]);
-  assert.deepEqual(visible.points,(await projectTrends(project,{days:'5'},reader)).points);
-  await assert.rejects(workspaceTrends({project:[project,peer]},reader),code('NOT_FOUND'));
-  await assert.rejects(workspaceTrends({project:randomUUID()}),code('NOT_FOUND'));
+test('workspace trends require management and include every active Project without Project selection',async()=>{
+  await assert.rejects(workspaceTrends({days:'5'},reader),code('FORBIDDEN'));
+  assert.deepEqual((await workspaceTrends({days:'5'})).scope.project_ids,[project,peer,historical,empty].sort());
   await assert.rejects(projectTrends(peer,{},reader),code('NOT_FOUND'));
-  assert.deepEqual((await workspaceTrends({project:[project,project]})).scope.project_ids,[project]);
+  for(const selected of[project,[project,peer],[project,project],randomUUID()])await assert.rejects(workspaceTrends({project:selected}),code('VALIDATION_ERROR'));
   for(const params of[{days:'0'},{days:'366'},{days:['2','2']},{status:'done'},{milestone:'none'},{project:peer}])await assert.rejects(projectTrends(project,params),code('VALIDATION_ERROR'));
   await assert.rejects(workspaceTrends({milestone:randomUUID()}),code('VALIDATION_ERROR'));
   await assert.rejects(workspaceTrends({project:Array(101).fill(project)}),code('VALIDATION_ERROR'));
@@ -87,9 +93,11 @@ test('fixed project and workspace Sessions cannot expand their scope',async()=>{
     const sessionId=randomUUID(),target={kind,entry_path:kind==='project'?`/app/w/${workspace}/p/${project}`:`/app/manage?workspace=${workspace}`,workspace_id:workspace,...(kind==='project'?{project_id:project}:{})};
     await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,created_at,expires_at) VALUES(?1,?2,?3,'credential',?4,?5,?6,?7,?8)").bind(sessionId,kind==='project'?'c'.repeat(64):'d'.repeat(64),owner,credential,kind,JSON.stringify(target),now,now+28800000).run();
     const scoped={...auth,kind:'cookie',sessionId,targetKind:kind,target};
-    assert.ok((await workspaceTrends({},scoped)).scope.project_ids.includes(project));
-    if(kind==='project')await assert.rejects(workspaceTrends({project:peer},scoped),code('NOT_FOUND'));
-    await assert.rejects(getWorkspaceIssueTrends(db,scoped,otherWorkspace,url(),now),code('NOT_FOUND'));
+    if(kind==='project'){
+      assert.ok((await projectTrends(project,{},scoped)).scope.project_ids.includes(project));
+      await assert.rejects(workspaceTrends({},scoped),code('FORBIDDEN'));
+    }else assert.equal((await workspaceTrends({},scoped)).scope.project_ids.length,4);
+    await assert.rejects(getWorkspaceIssueTrends(db,scoped,otherWorkspace,url(),now),code('FORBIDDEN'));
     await db.prepare('UPDATE web_sessions SET revoked_at=?1 WHERE id=?2').bind(now,sessionId).run();
     await assert.rejects(workspaceTrends({},scoped),code('UNAUTHORIZED'));
   }
@@ -102,12 +110,34 @@ test('fixed project and workspace Sessions cannot expand their scope',async()=>{
 });
 test('workspace and project administrators resolve to writer with the same current permissions as effective grants',async()=>{
   for(const target of[peer,null]){
-    const id=randomUUID();await db.prepare('INSERT INTO scoped_administrator_grants(id,principal_id,workspace_id,project_id,generation,created_at,updated_at,created_operation_id) VALUES(?1,?2,?3,?4,?5,1,1,?6)').bind(id,member,workspace,target,randomUUID(),randomUUID()).run();
-    assert.equal((await projectTrends(peer,{days:'1'},reader)).points.at(-1).total,2);
-    if(target===null)assert.equal((await workspaceTrends({},reader)).scope.project_ids.length,4);
-    await db.prepare('UPDATE scoped_administrator_grants SET revoked_at=?1,revoked_by_principal_id=?2 WHERE id=?3').bind(now,owner,id).run();
+    const context=await administrator(workspace,target);
+    assert.equal((await projectTrends(peer,{days:'1'},context)).points.at(-1).total,2);
+    if(target===null)assert.deepEqual((await workspaceTrends({},context)).scope.project_ids,[project,peer,historical,empty].sort());
+    else await assert.rejects(workspaceTrends({},context),code('FORBIDDEN'));
+    await revokeAdministrator(context);
     await assert.rejects(projectTrends(peer,{},reader),code('NOT_FOUND'));
   }
+});
+test('empty Workspace supports Owner and Workspace administrators without direct Project grants',async()=>{
+  const context=await administrator(otherWorkspace);
+  for(const actor of[auth,context]){
+    const result=await getWorkspaceIssueTrends(db,actor,otherWorkspace,url({days:'2'}),now);
+    assert.deepEqual(result.scope.project_ids,[]);
+    assert.ok(result.points.every(point=>Object.entries(point).every(([key,value])=>key==='date'||value===0)));
+  }
+  await revokeAdministrator(context);
+  await assert.rejects(getWorkspaceIssueTrends(db,context,otherWorkspace,url(),now),code('NOT_FOUND'));
+});
+test('Workspace aggregates use management Session scope, including Project selection and Owner admin sessions',async()=>{
+  const context=await administrator();
+  try{for(const[kind,actor]of[['project',context],['workspace',context],['project_selection',context],['admin',auth]]){
+    const sessionId=randomUUID(),target=kind==='admin'?{kind,entry_path:'/app/admin',section:'overview'}:kind==='project_selection'?{kind,entry_path:'/app'}:kind==='workspace'?{kind,entry_path:`/app/manage?workspace=${workspace}`,workspace_id:workspace}:{kind,entry_path:`/app/w/${workspace}/p/${project}`,workspace_id:workspace,project_id:project};
+    await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,created_at,expires_at) VALUES(?1,?2,?3,'credential',?4,?5,?6,?7,?8)").bind(sessionId,randomUUID().replaceAll('-','').repeat(2),actor.principalId,actor.credentialId,kind,JSON.stringify(target),now,now+28800000).run();
+    const scoped={...actor,kind:'cookie',sessionId,targetKind:kind,target};
+    if(kind==='project')await assert.rejects(workspaceTrends({},scoped),code('FORBIDDEN'));
+    else assert.equal((await workspaceTrends({},scoped)).scope.project_ids.length,4);
+    await db.prepare('UPDATE web_sessions SET revoked_at=?1 WHERE id=?2').bind(now,sessionId).run();
+  }}finally{await revokeAdministrator(context);}
 });
 function instrument(database,hook=async()=>{}){
   const queries=[],sqls=new WeakMap();const wrap=(statement,sql,values=[])=>{
@@ -125,21 +155,77 @@ test('credential, project Grant and container revocation are checked inside data
     }
   }
 });
+test('Workspace management revocation and generation replacement fail closed during aggregate reads',async()=>{
+  const context=await administrator(),grant=context.managementGrants[0];
+  for(const change of['revocation','generation'])for(const stage of['before','after']){
+    let changed=false;
+    const measured=instrument(db,async(sql,phase)=>{
+      if(changed||phase!==stage||!sql.includes('FROM issue_trend_days d'))return;
+      changed=true;
+      if(change==='revocation')await revokeAdministrator(context);
+      else await db.prepare('UPDATE scoped_administrator_grants SET generation=?1,version=version+1 WHERE id=?2').bind(randomUUID(),grant.id).run();
+    });
+    try{
+      await assert.rejects(workspaceTrends({},context,measured.db),error=>['NOT_FOUND','CURSOR_SCOPE_MISMATCH'].includes(error.code));
+      assert.ok(changed);
+    }finally{
+      await db.prepare('UPDATE scoped_administrator_grants SET revoked_at=NULL,revoked_by_principal_id=NULL,generation=?1 WHERE id=?2').bind(grant.generation,grant.id).run();
+    }
+  }
+  await revokeAdministrator(context);
+});
+test('Workspace authority is checked after the returned Project scope is resolved',async()=>{
+  const context=await administrator();let candidates=0,changed=false;
+  const measured=instrument(db,async(sql,stage)=>{
+    if(stage==='after'&&sql.includes('idx_projects_workspace_purge_state')&&++candidates===2){
+      changed=true;await revokeAdministrator(context);
+    }
+  });
+  try{await assert.rejects(workspaceTrends({},context,measured.db),code('NOT_FOUND'));assert.ok(changed);}
+  finally{await revokeAdministrator(context);}
+});
+test('Workspace aggregates exclude archived Projects and reject archives that race an empty read',async()=>{
+  await db.prepare('UPDATE projects SET deleted_at=?1,deleted_by_principal_id=?2 WHERE id=?3').bind(now,owner,empty).run();
+  try{assert.deepEqual((await workspaceTrends()).scope.project_ids,[project,peer,historical].sort());}
+  finally{await db.prepare('UPDATE projects SET deleted_at=NULL,deleted_by_principal_id=NULL WHERE id=?1').bind(empty).run();}
+  for(const stage of['before','after']){
+    let changed=false;
+    const measured=instrument(db,async(sql,phase)=>{
+      if(changed||phase!==stage||!sql.includes('FROM issue_trend_days d'))return;
+      changed=true;await db.prepare('UPDATE workspaces SET deleted_at=?1,deleted_by_principal_id=?2 WHERE id=?3').bind(now,owner,otherWorkspace).run();
+    });
+    try{await assert.rejects(getWorkspaceIssueTrends(measured.db,auth,otherWorkspace,url(),now),code('NOT_FOUND'));assert.ok(changed);}
+    finally{await db.prepare('UPDATE workspaces SET deleted_at=NULL,deleted_by_principal_id=NULL WHERE id=?1').bind(otherWorkspace).run();}
+  }
+});
+test('empty Workspace cannot be archived between final active and management checks',async()=>{
+  const context=await administrator(otherWorkspace);
+  try{for(const actor of[auth,context]){
+    let managementChecks=0,changed=false;
+    const measured=instrument(db,async(sql,stage)=>{
+      if(stage==='before'&&sql.includes('control_workspace')&&!sql.includes('FROM issue_trend_days d')&&++managementChecks===2){
+        changed=true;await db.prepare('UPDATE workspaces SET deleted_at=?1,deleted_by_principal_id=?2 WHERE id=?3').bind(now,owner,otherWorkspace).run();
+      }
+    });
+    try{await assert.rejects(getWorkspaceIssueTrends(measured.db,actor,otherWorkspace,url(),now),code('NOT_FOUND'));assert.ok(changed);}
+    finally{await db.prepare('UPDATE workspaces SET deleted_at=NULL,deleted_by_principal_id=NULL WHERE id=?1').bind(otherWorkspace).run();}
+  }}finally{await revokeAdministrator(context);}
+});
 test('workspace authorization costs stay local with many unrelated Workspace grants',async t=>{
-  const before=instrument(db);await workspaceTrends({days:'1'},reader,before.db);
+  const context=await administrator();
+  const before=instrument(db);await workspaceTrends({days:'1'},context,before.db);
   const samples=[];
   for(let index=0;index<250;index++){
     const id=randomUUID();samples.push(db.prepare("INSERT INTO projects(id,workspace_id,display_name,created_at,updated_at,created_by_principal_id,updated_by_principal_id,created_operation_id) VALUES(?1,?2,'Unrelated cost',?3,?3,?4,?4,?5)").bind(id,otherWorkspace,now,owner,randomUUID()));
     samples.push(db.prepare("INSERT INTO project_grants(id,principal_id,project_id,role,created_at,updated_at,created_operation_id) VALUES(?1,?2,?3,'reader',1,1,?4)").bind(randomUUID(),member,id,randomUUID()));
   }
   for(let index=0;index<samples.length;index+=80)await db.batch(samples.slice(index,index+80));
-  const after=instrument(db);assert.deepEqual((await workspaceTrends({days:'1'},reader,after.db)).scope.project_ids,[project]);
+  const after=instrument(db);assert.deepEqual((await workspaceTrends({days:'1'},context,after.db)).scope.project_ids,[project,peer,historical,empty].sort());
   const scoped=queries=>queries.filter(item=>item.sql.includes('idx_projects_workspace_purge_state')).map(item=>item.rows_read);
   assert.ok(scoped(after.queries).every(value=>value<100));
   assert.ok(scoped(after.queries).every((value,index)=>value<=scoped(before.queries)[index]+4), 'index depth may change, but unrelated grants must not be scanned');
   await assert.rejects(getWorkspaceIssueTrends(db,auth,otherWorkspace,url(),now),code('VALIDATION_ERROR'));
-  const foreign=(await db.prepare('SELECT id FROM projects WHERE workspace_id=?1 LIMIT 1').bind(otherWorkspace).first()).id;
-  await assert.rejects(workspaceTrends({project:[project,foreign]},reader),code('NOT_FOUND'));
+  await revokeAdministrator(context);
   t.diagnostic(`Local workspace permission D1 evidence only: ${JSON.stringify({unrelated_grants:250,before_rows_read:scoped(before.queries),after_rows_read:scoped(after.queries)})}`);
 });
 test('new milestones have complete birth-date coverage while their Project history is pending',async()=>{

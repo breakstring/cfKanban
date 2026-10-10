@@ -201,7 +201,7 @@ const invitationReviewRecord = ref<InvitationRecoveryRecord | null>(null);
 const presentedInvitationRecord = ref<InvitationRecoveryRecord | null>(null);
 const selectedWorkspace = ref("");
 const selectedProject = ref<ProjectEntry | null>(null);
-const workspaceForm = ref({ display_name: "" });
+const workspaceForm = ref({ display_name: "", description: "" });
 const projectForm = ref({ context: "", display_name: "" });
 const inviteGrants = ref([{ project_id: "", role: "writer" as "reader" | "writer" }]);
 const validInviteGrants = computed(() => inviteGrants.value.length >= 1 && inviteGrants.value.length <= 20
@@ -297,14 +297,15 @@ function receiveOwnerDraftProject(item: ProjectEntry, statuses: ProjectStatusRes
 
 useSessionTextDraft({
   key: "owner-workspace-create", path: "/app/admin?section=workspaces",
-  label: { en: "New workspace name", zh: "新工作区名称" },
-  capture: () => showWorkspace.value ? changedTextFields({ display_name: [workspaceForm.value.display_name, ""] }) : null,
+  label: { en: "New workspace", zh: "新工作区" },
+  capture: () => showWorkspace.value ? changedTextFields({ display_name: [workspaceForm.value.display_name, ""], description: [workspaceForm.value.description, ""] }) : null,
   canRestore: () => ownerTextFormReady("workspace") && !hasUncertainWrite("/api/v1/workspaces"),
   uncertain: () => ownerTextWriteUncertain("/api/v1/workspaces"),
   restore: async (fields, _target, isCurrent) => {
     const verified = await verifyOwnerDraftSession(isCurrent);
     if (!isCurrent() || !verified || !ownerTextFormReady("workspace") || hasUncertainWrite("/api/v1/workspaces")) return false;
     if (fields.display_name !== undefined) workspaceForm.value.display_name = fields.display_name;
+    if (fields.description !== undefined) workspaceForm.value.description = fields.description;
     showWorkspace.value = true;
     return true;
   },
@@ -1123,9 +1124,10 @@ async function createWorkspace(): Promise<void> {
   if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
-    await apiRequest("/api/v1/workspaces", { body: workspaceForm.value, method: "POST" });
+    await apiRequest("/api/v1/workspaces", { body: { display_name: workspaceForm.value.display_name,
+      ...(workspaceForm.value.description ? { description: workspaceForm.value.description } : {}) }, method: "POST" });
     showWorkspace.value = false;
-    workspaceForm.value = { display_name: "" };
+    workspaceForm.value = { display_name: "", description: "" };
     await load();
   } catch (caught) { setError(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -2066,7 +2068,7 @@ onUnmounted(() => {
       <UButton color="neutral" variant="outline" v-if="auditNextCursor" class="load-more" type="button" :disabled="auditLoadingMore" @click="loadAudit(false)">{{ auditLoadingMore ? "…" : ui("Load older Audit events", "加载更早审计事件") }}</UButton>
     </template>
 
-    <ModalDialog v-if="showWorkspace" :busy="busy" :title="ui('Create Workspace', '创建工作区')" @close="showWorkspace = false"><form class="form-stack" @submit.prevent="createWorkspace"><label>{{ ui("Name", "名称") }}<UInput class="w-full" v-model="workspaceForm.display_name" required maxlength="128" /></label><div class="form-actions"><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="showWorkspace = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="busy">{{ ui("Create", "创建") }}</UButton></div></form></ModalDialog>
+    <ModalDialog v-if="showWorkspace" :busy="busy" :title="ui('Create Workspace', '创建工作区')" @close="showWorkspace = false"><form class="form-stack" @submit.prevent="createWorkspace"><label>{{ ui("Name", "名称") }}<UInput class="w-full" v-model="workspaceForm.display_name" required maxlength="128" /></label><label>{{ ui("Workspace description (optional)", "工作区描述（选填）") }}<UTextarea class="w-full" v-model="workspaceForm.description" :rows="4" /></label><div class="form-actions"><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="showWorkspace = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="busy">{{ ui("Create", "创建") }}</UButton></div></form></ModalDialog>
     <ModalDialog v-if="showProject" :busy="busy" :title="ui('Create Project', '创建项目')" @close="showProject = false"><form class="form-stack" @submit.prevent="createProject"><label>{{ ui("Workspace", "工作区") }}<select v-model="selectedWorkspace" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id" :title="workspaceChoiceLabels.get(workspace.id)?.title">{{ workspaceChoiceLabels.get(workspace.id)?.label }}</option></select></label><label>{{ ui("Name", "名称") }}<UInput class="w-full" v-model="projectForm.display_name" required maxlength="128" /></label><label>{{ ui("Project notes (optional)", "项目说明（选填）") }}<UTextarea class="w-full" v-model="projectForm.context" :rows="5" /></label><div class="form-actions"><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="showProject = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="busy">{{ ui("Create", "创建") }}</UButton></div></form></ModalDialog>
     <ModalDialog v-if="showContainerEdit && containerEdit" :busy="busy" :title="ui('Change name', '修改名称')" @close="showContainerEdit = false"><form class="form-stack" @submit.prevent="saveContainerEdit"><label>{{ ui("Display name", "显示名称") }}<UInput class="w-full" v-model="containerEdit.display_name" required maxlength="128" /></label><div class="form-actions"><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="showContainerEdit = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="busy">{{ t("action.save") }}</UButton></div></form></ModalDialog>
     <ModalDialog v-if="showProjectSettings && selectedProject" :busy="busy" :title="ui('Project settings', '项目设置')" @close="closeProjectSettings"><form class="form-stack" @submit.prevent="saveProjectSettings"><p><code>{{ selectedProject.workspaceName }} / {{ selectedProject.display_name }}</code> · v{{ selectedProject.version }}</p><label>{{ ui("Display name", "显示名称") }}<UInput class="w-full" v-model="projectSettingsForm.display_name" required maxlength="128" /></label><label>{{ ui("Project notes (optional)", "项目说明（选填）") }}<UTextarea class="w-full" v-model="projectSettingsForm.context" :rows="6" /></label><UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="busy">{{ t("action.save") }}</UButton></form><section class="recovery-section"><h3>{{ ui("Board column names", "看板列名称") }}</h3><p class="muted-copy">{{ ui("Stable keys, order, and terminal semantics do not change.", "可以修改看板列的显示名称；列的数量、顺序和用途保持不变。") }}</p><form v-for="status in projectStatuses" :key="status.key" class="compact-inline-form" @submit.prevent="saveStatusName(status)"><code>{{ status.key }}</code><UInput class="w-full" :model-value="statusDrafts[status.key] ?? ''" @update:model-value="statusDrafts[status.key] = String($event)" required maxlength="128" /><UButton color="neutral" variant="ghost" class="text-button" type="submit" :disabled="busy || statusDrafts[status.key] === status.display_name">{{ t("action.save") }}</UButton></form></section></ModalDialog>

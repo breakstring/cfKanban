@@ -199,22 +199,22 @@ test("apply journals both digests before executing the one plan-bound command", 
   assert.equal(calls, 1);
 });
 
-test("schema 30 initial plans stop before resources are created, while other schemas keep their plan semantics", () => {
+test("包含schema30迁移的首次安装计划继续拒绝，schema31不绕过deferred限制", () => {
   const input = { taskId: "isolated-install", accountId: "isolated", ownerDisplayName: "IsolatedOwner",
     release: { manifest_version: "isolated", manifest_sha256: "a".repeat(64), service_bundle_version: "isolated", service_bundle_sha256: "b".repeat(64) } };
-  assert.throws(() => createStrictZeroPlan({ ...input, release: { ...input.release, schema_version: 30 } }),
-    { code: "DEPLOYMENT_INITIAL_SCHEMA30_UNSUPPORTED" });
-  for (const schema of [29, 31]) {
-    assert.equal(createStrictZeroPlan({ ...input, release: { ...input.release, schema_version: schema } }).plan.release.schema_version, schema);
+  for (const schema of [30, 31, 32]) {
+    assert.throws(() => createStrictZeroPlan({ ...input, release: { ...input.release, schema_version: schema } }),
+      { code: "DEPLOYMENT_INITIAL_SCHEMA30_UNSUPPORTED" });
   }
+  assert.equal(createStrictZeroPlan({ ...input, release: { ...input.release, schema_version: 29 } }).plan.release.schema_version, 29);
 });
 
-test("old schema 30 initial plans cannot execute Cloudflare writes, and readbacks remain available", async t => {
+for (const schema of [30, 31]) test(`既存schema${schema}新装计划执行前拒绝云端写入并保留只读检查`, async t => {
   const stateRoot = await mkdtemp(path.join(tmpdir(), "cfkanban-schema30-install-guard-"));
   t.after(() => rm(stateRoot, { recursive: true, force: true }));
   const value = createStrictZeroPlan({ taskId: "isolated-install", accountId: "isolated", ownerDisplayName: "IsolatedOwner",
     release: { manifest_version: "isolated", manifest_sha256: "a".repeat(64), service_bundle_version: "isolated", service_bundle_sha256: "b".repeat(64), schema_version: 29 } }).plan;
-  value.release.schema_version = 30;
+  value.release.schema_version = schema;
   const operation = { stateRoot, instanceId: value.target.instance_id, operationId: value.operation_id };
   await createJournal({ ...operation, plan: value });
   await authorizeJournal({ ...operation, taskId: value.task_id, planDigest: canonicalDigest(value) });

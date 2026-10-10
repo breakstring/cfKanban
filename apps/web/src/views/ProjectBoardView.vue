@@ -7,6 +7,7 @@ import UInput from "@nuxt/ui/components/Input.vue";
 import USelect from "@nuxt/ui/components/Select.vue";
 import UTextarea from "@nuxt/ui/components/Textarea.vue";
 
+import ProjectViewIcon from "../components/ProjectViewIcon.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import AssigneeMenu from "../components/AssigneeMenu.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
@@ -816,10 +817,10 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
       <div class="board-utility-bar">
         <div class="board-view-controls">
           <div class="board-view-bar" role="group" :aria-label="locale === 'zh-CN' ? '项目视图' : 'Project view'">
-            <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'board' }" :aria-pressed="viewMode === 'board'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('board')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ locale === 'zh-CN' ? '看板' : 'Board' }}</button>
-            <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'list' }" :aria-pressed="viewMode === 'list'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('list')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4h10M7 10h10M7 16h10M3 4h.01M3 10h.01M3 16h.01" /></svg>{{ locale === 'zh-CN' ? '列表' : 'List' }}</button>
-            <button type="button" class="board-view-label board-view-inactive" :disabled="saving.size > 0 || hasPendingWrites" @click="openMilestones">{{ locale === 'zh-CN' ? '里程碑' : 'Milestones' }}</button>
-            <button v-if="canReadIssueTrends(session, workspaceId, projectId)" type="button" class="board-view-label board-view-inactive" :disabled="saving.size > 0 || hasPendingWrites" @click="openTrends">{{ locale === 'zh-CN' ? '趋势' : 'Trends' }}</button>
+            <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'board' }" :aria-pressed="viewMode === 'board'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('board')"><ProjectViewIcon view="board" />{{ locale === 'zh-CN' ? '看板' : 'Board' }}</button>
+            <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'list' }" :aria-pressed="viewMode === 'list'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('list')"><ProjectViewIcon view="list" />{{ locale === 'zh-CN' ? '列表' : 'List' }}</button>
+            <button type="button" class="board-view-label board-view-inactive" :disabled="saving.size > 0 || hasPendingWrites" @click="openMilestones"><ProjectViewIcon view="milestones" />{{ locale === 'zh-CN' ? '里程碑' : 'Milestones' }}</button>
+            <button v-if="canReadIssueTrends(session, workspaceId, projectId)" type="button" class="board-view-label board-view-inactive" :disabled="saving.size > 0 || hasPendingWrites" @click="openTrends"><ProjectViewIcon view="trends" />{{ locale === 'zh-CN' ? '趋势' : 'Trends' }}</button>
           </div>
         </div>
         <ProjectSearch v-model="search" :issues="searchIssues" :project-id="projectId" :applied-search="appliedSearch" :disabled="loading || saving.size > 0 || hasPendingWrites" :reset-key="`${workspaceId}:${projectId}:${session.principal.id}:${session.session_id}`" @search="submitProjectSearch" @open="openListIssue" />

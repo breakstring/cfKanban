@@ -30,10 +30,9 @@ test('MCP trend reads forward only bounded date/scope selection and preserve una
   assert.equal(result.data.points[0].unfinished, null);
   assert.equal(calls[0].pathname, `/api/v1/workspaces/${f.workspaceId}/projects/${f.projectId}/issues/trends`);
   assert.deepEqual([...calls[0].searchParams], [['days', '365'], ['milestone', milestone]]);
-  const other = randomUUID();
-  await facade.callTool(workspaceTool, { instance_id: f.instanceId, workspace_id: f.workspaceId, project_ids: [f.projectId, other], days: 1 });
+  await facade.callTool(workspaceTool, { instance_id: f.instanceId, workspace_id: f.workspaceId, days: 1 });
   assert.equal(calls[1].pathname, `/api/v1/workspaces/${f.workspaceId}/issues/trends`);
-  assert.deepEqual(calls[1].searchParams.getAll('project'), [f.projectId, other]);
+  assert.deepEqual([...calls[1].searchParams], [['days', '1']]);
   await facade.callTool(workspaceTool, { instance_id: f.instanceId, workspace_id: f.workspaceId });
   assert.equal(calls[2].search, '');
 });
@@ -47,16 +46,17 @@ test('missing trend capability stops before any trend or Issue-list request', as
   assert.equal(calls, 0);
 });
 
-test('bound Workspace trend reads project only its binding and reject foreign scope', async t => {
+test('Project-bound panels cannot read Workspace aggregates and preserve Project trend scope', async t => {
   const f = await createMcpStateFixture(t);
   f.discovery.capabilities = { issue_trends: true };
   const calls = [];
   const facade = adapter(f, url => { calls.push(url); return Response.json({ points: [] }); }, { binding: { instance_id: f.instanceId, expected_principal_id: f.principalId, project_ids: [f.projectId] } });
   const target = { instance_id: f.instanceId, workspace_id: f.workspaceId };
-  assert.equal((await facade.callTool(workspaceTool, target)).ok, true);
-  assert.deepEqual(calls[0].searchParams.getAll('project'), [f.projectId]);
+  assert.equal((await facade.callTool(workspaceTool, target)).error.code, 'MCP_PROJECT_BINDING_MISMATCH');
+  assert.equal(calls.length, 0);
+  assert.equal((await facade.callTool(trendTool, { ...target, project_id: f.projectId })).ok, true);
   const foreign = randomUUID();
-  assert.equal((await facade.callTool(workspaceTool, { ...target, project_ids: [foreign] })).error.code, 'MCP_PROJECT_BINDING_MISMATCH');
+  assert.equal((await facade.callTool(workspaceTool, { ...target, project_ids: [foreign] })).error.code, 'MCP_INVALID_ARGUMENTS');
   assert.equal((await facade.callTool(trendTool, { ...target, project_id: foreign })).error.code, 'MCP_PROJECT_BINDING_MISMATCH');
   assert.equal(calls.length, 1);
 });

@@ -33,7 +33,7 @@ define("projects_get", "Read one explicit Project and its allowed_actions.", pro
 define("statuses_list", "Read server-defined status names in one explicit Project.", projectTarget, Object.keys(projectTarget));
 const trendDays = { type: "integer", minimum: 1, maximum: 365 };
 define("project_issue_trends", "Read UTC daily Issue stock and creation/completion flows in one explicit Project, optionally one milestone. Default 30 days; null is unavailable history, not zero. Current day is partial. Requires advertised issue_trends support.", { ...projectTarget, days: trendDays, milestone: uuid }, Object.keys(projectTarget));
-define("workspace_issue_trends", "Read UTC daily Issue trends in one explicit Workspace. Optional project_ids narrow current readable Projects and Session scope; return scope and coverage. Default 30 days; null is unavailable history. A bound panel remains confined to its bound Projects.", { instance_id: uuid, workspace_id: uuid, project_ids: array(uuid, 100, 1), days: trendDays }, ["instance_id", "workspace_id"]);
+define("workspace_issue_trends", "Read UTC daily Issue trends across all active Projects in one explicit Workspace. Requires current instance Owner or Workspace administrator authorization and Workspace management Session scope. Project-bound panels cannot read Workspace aggregates. Default 30 days, at most 365 days and 100 Projects; null is unavailable history.", { instance_id: uuid, workspace_id: uuid, days: trendDays }, ["instance_id", "workspace_id"]);
 define("assignees_list", "Read one bounded page of current Project assignees; only public Principal identifiers and names are exposed.", { ...projectTarget, cursor: pagination.cursor, limit: pagination.limit }, Object.keys(projectTarget));
 define("labels_list", "Read one bounded page of existing active labels in one explicit Project. Does not create or manage labels.", { ...projectTarget, cursor: pagination.cursor, limit: pagination.limit }, Object.keys(projectTarget));
 const milestoneFields = { title: text(200), description: { ...text(8192, 0), "x-max-utf8-bytes": 8192 }, due_date: nullable({ ...text(10), pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }), status_key: enumeration(["open", "closed"]) };
@@ -143,6 +143,7 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
     if (!tool) return localFailure("MCP_TOOL_NOT_FOUND");
     if (!validate(tool.inputSchema, args)) return localFailure("MCP_INVALID_ARGUMENTS");
     const input = structuredClone(args);
+    if (bound && name === "cfkanban_workspace_issue_trends") return localFailure("MCP_PROJECT_BINDING_MISMATCH");
     if (name === "cfkanban_issues_complete" && Buffer.byteLength(JSON.stringify(pick(input, ["expected_version", "summary", "verification", "artifacts", "follow_ups"]))) > 32768) return localFailure("MCP_INVALID_ARGUMENTS");
     if (bound?.project_ids.length === 0 && !localIdentity && !["cfkanban_connection_inspect", "cfkanban_profile_locale_set", "cfkanban_workspaces_list", "cfkanban_projects_list"].includes(name)) return localFailure("MCP_EXPLICIT_SCOPE_REQUIRED");
     const controller = new AbortController();
@@ -274,14 +275,7 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
       const write = body => ({ method: "POST", body, idempotencyKey: input.idempotency_key });
       switch (name) {
         case "cfkanban_project_issue_trends": result = await request(query(`${projectPath}/issues/trends`, pick(input, ["days", "milestone"]))); break;
-        case "cfkanban_workspace_issue_trends": {
-          if (bound) {
-            input.project_ids ??= [...bound.project_ids];
-            input.project_ids.forEach(scopeCheck);
-          }
-          result = await request(query(`/api/v1/workspaces/${input.workspace_id}/issues/trends`, { days: input.days, project: input.project_ids }));
-          break;
-        }
+        case "cfkanban_workspace_issue_trends": result = await request(query(`/api/v1/workspaces/${input.workspace_id}/issues/trends`, pick(input, ["days"]))); break;
         case "cfkanban_search_status": result = await request(query("/api/v1/search-index/status", { allow_unfiltered: true })); break;
         case "cfkanban_search_snapshot": result = await request(query("/api/v1/search-index/snapshot", { project: input.project_id, ...pick(input, ["cursor", "limit"]) })); break;
         case "cfkanban_search_changes": result = await request(query("/api/v1/search-index/changes", { project: input.project_id, ...pick(input, ["after", "limit"]) })); break;

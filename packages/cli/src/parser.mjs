@@ -46,6 +46,7 @@ export function matches(schema, value) {
   if (schema.enum && !schema.enum.includes(value)) return false;
   if (schema.const !== undefined && value !== schema.const) return false;
   if (value === null) return schema.nullable === true || schema.type === 'null' || Array.isArray(schema.type) && schema.type.includes('null');
+  if (schema.type === 'null') return false;
   if (Array.isArray(schema.type)) return schema.type.some(type => matches({...schema,type},value));
   if (schema.type === 'string') return typeof value === 'string' && [...value].length >= (schema.minLength ?? 0) && [...value].length <= (schema.maxLength ?? Infinity) && (!schema.pattern || new RegExp(schema.pattern).test(value)) && (schema.format !== 'uuid' || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
   if (schema.type === 'integer' || schema.type === 'number') return typeof value === 'number' && Number.isFinite(value) && (schema.type !== 'integer' || Number.isSafeInteger(value)) && value >= (schema.minimum ?? -Infinity) && value <= (schema.maximum ?? Infinity);

@@ -280,7 +280,7 @@ Instance upgrade 是独立 Cloudflare plan：
 
 固定兼容例外仅适用于 `0030_issue_trend_backfill_maintenance.sql` 且原始 SHA-256 为 `4a1db214135aeb642784fb08a98752bad7caa920dcf12f9f9bf0fdd6e7fafbb5` 的已发布字节。已验证 Skill 可按内置 allowlist 为固定的 `CASE … END` 表达式加括号，保持语义等价；发布文件与 manifest/ledger checksum 不变。新 plan 必须明确冻结转换标识、原始摘要与实际执行 SQL 摘要并纳入 plan digest；执行前先核验原始名称/字节，再校验固定转换结果，journal 同时记录两种摘要。转换后的完整 SQL 仍以 `single_query` 执行且不得超过 24,576 字节。未含此记录的旧 plan 不适用；名称/摘要不符、任意 SQL 改写和失败后的隐式 fallback 均须停止。原文件通过本地 SQLite 与固定 Wrangler splitter 检查，但远端 `/query` 返回 `incomplete input`，schema 读回确认没有部分应用。本地 validator 不能证明远端解析器兼容；未加括号的 `CASE … END` 被误拆分是当前推断，不能视为通用解析规则，最终仍需远端 ledger/schema 读回。
 
-RC9 的 schema 30 支持范围是既有实例从 schema 29 升至 30，以及已在 schema 30 的无 migration 升级。schema 30 首次部署在创建计划或云端写入前拒绝；正常 latest stable 新装仍可使用。不能把升级转换套入首次部署，也不能用 RC9 凭旧 schema 30 初始部署 plan 继续云端写入。只读资源与 migration/schema 读回仍允许用于检查中断状态。首次部署的 migration 投影、摘要与恢复合同必须单独冻结并验收后才能开放，不能就地改写已发布 migration。
+RC9 的 schema 30 支持范围是既有实例从 schema 29 升至 30，以及已在 schema 30 的无 migration 升级。包含 schema 30 迁移的新装（包括 schema 31）在创建计划或云端写入前拒绝；正常 latest stable 新装仍可使用。不能把升级转换套入首次部署，也不能用 RC9 凭旧 schema 30 初始部署 plan 继续云端写入。只读资源与 migration/schema 读回仍允许用于检查中断状态。首次部署的 migration 投影、摘要与恢复合同必须单独冻结并验收后才能开放，不能就地改写已发布 migration。
 
 已验证完整 bundle 提供公共 CLI 时，可用 `cfkanban deploy upgrade plan` 准备计划，再由 `cfkanban deploy upgrade apply` 或 `cfkanban deploy upgrade resume` 编排上述步骤。仅 `deploy_worker_and_static_assets` 子进程的等待上限为 15 分钟，其他命令保留默认超时；超时或取消仍意味着部署结果不确定，必须保留 journal 并先读回再决定如何续做，不自动重试。通过非秘密 JSON 输入完整冻结 plan、绑定 task/operation/instance/digest 的 authorization 及已验证工件路径。已有实例使用当前私有状态中的可信 origin，支持已验证的自定义域名；写入前核对域名与 Owner，发送 Credential 前重新绑定当前可信 origin，最终拒绝 origin version 回退。域名迁移先走独立 rebind 流程；历史部署回执可以保留迁移前的地址。首次部署仍核验准确的 `workers.dev` 地址。
 
@@ -314,9 +314,9 @@ Worker 部署前检查当前 deployment、bindings 与 Cron，部署后核对真
 
 当前入口要求带固定 Worker deployment/version 证据的已验证 `cfkanban_instance_upgrade_receipt`。全新 schema 30 实例没有冻结的旧历史队列，无需首次回填；仅有 bootstrap receipt 不满足此维护入口。
 
-schema 30 的首次历史处理独立于小时 Cron。用户要求补齐待处理的可恢复历史时，使用本流程；需当前 Owner 身份及准确 Cloudflare 部署的维护权限。它是固定用途的派生投影维护，不修改 Issue/Event 事实、Grant 或业务权限，不部署 Worker、不改 schedule，也不新增付费资源。Web/API/MCP 展示历史覆盖，不持有本机 Cloudflare 凭据或启动维护。
+schema 30 / 31 的首次历史处理独立于小时 Cron。用户要求补齐待处理的可恢复历史时，使用本流程；需当前 Owner 身份及准确 Cloudflare 部署的维护权限。它是固定用途的派生投影维护，不修改 Issue/Event 事实、Grant 或业务权限，不部署 Worker、不改 schedule，也不新增付费资源。Web/API/MCP 展示历史覆盖，不持有本机 Cloudflare 凭据或启动维护。
 
-1. `maintenance trends inspect` 输入 `{instanceId, currentReceiptPath, serviceBundleRoot, wranglerExecutable}`。使用实际部署版本的私有 receipt 及匹配的已验证不可变 Service 缓存，不使用源码工作树或插件副本。检查可信实例/origin、当前 Owner 连续性、准确 account/auth profile、Worker deployment/version、D1 UUID/binding 及 migration ledger/schema 30。返回 pending/partial 数量和 D1 检查的实际用量，不写历史；凭据留在安全模块内。
+1. `maintenance trends inspect` 输入 `{instanceId, currentReceiptPath, serviceBundleRoot, wranglerExecutable}`。使用实际部署版本的私有 receipt 及匹配的已验证不可变 Service 缓存，不使用源码工作树或插件副本。检查可信实例/origin、当前 Owner 连续性、准确 account/auth profile、Worker deployment/version、D1 UUID/binding 及实际 migration ledger/schema（30 或 31）。receipt、不可变 Service manifest、线上 health 与 D1 元数据必须匹配同一 schema。升级至 31 后，使用相应升级 receipt 与 Service 重新计划，不能复用 schema 30 计划或自动提高预算。返回 pending/partial 数量和 D1 检查的实际用量，不写历史；凭据留在安全模块内。
 2. 规划预算前，核对当前账户用量与剩余额度。向 `maintenance trends plan` 传入上述字段、`taskId`、可选 `operationId` 和 `budget`；返回 `{plan, plan_digest, inspection}`。计划冻结 receipt/来源摘要、Service 版本/schema、算法版本 1、Owner 与准确目标。不能覆盖 account/profile/Worker/database，不能传任意 SQL 或加载可变源码算法。
 3. 默认预算为 `batchSize: 8`、`maxPages: 1000`、`maxDurationMs: 1800000`、`maxRequests: 3000`、`requestIntervalMs: 500`、`rowsRead: 250000`、`rowsWritten: 50000`。只能减少工作量或放慢请求，不能扩大上限。每个 Issue 页最多读取 100 个投影后的 Event；启动下一页前预留读取 4000 行、写入 1000 行及控制请求。账户其他流量仍消耗额度，本地预算不表示账户费用封顶。
 4. 展示准确目标、影响、预算与计划摘要。已有明确授权覆盖时不重复询问；否则对这份具体计划取得授权。`maintenance trends run` 输入 `{instanceId, taskId, operationId, plan, authorization, currentReceiptPath, serviceBundleRoot, wranglerExecutable}`，其中 `authorization` 为匹配计划的 `{task_id, operation_id, instance_id, plan_digest}`。公共 CLI 同流程为 `cfkanban deploy trends inspect/plan/run`，非秘密结构化输入通过 `--input-file` 或 `--input-stdin` 提供。

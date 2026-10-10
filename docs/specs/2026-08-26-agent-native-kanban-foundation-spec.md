@@ -111,7 +111,7 @@ Owner bootstrap、轮换和恢复不创建新身份：明文 Credential 只在�
 
 | 实体 | 职责 | 关键字段或约束 |
 | --- | --- | --- |
-| Workspace | 部署实例内的显式命名空间与候选隔离边界 | immutable UUID、display name、deleted_at、deleted_by_principal_id、version |
+| Workspace | 部署实例内的显式命名空间与候选隔离边界 | immutable UUID、display name、可选有界 description（最大 32 KiB UTF-8）、deleted_at、deleted_by_principal_id、version |
 | Project | Workspace 内的 Issue 命名空间与权限边界 | immutable UUID、workspace UUID、name、可选有界 context、可选 Issue/Comment/Principal active limits、deleted_at、deleted_by_principal_id、version |
 | Workflow Status | Issue 所处工作阶段 | 固定五个 key/category/position/terminal；Project-scoped display name override |
 | Issue | 可追踪工作单元 | immutable ID、实例级全局 issue number 与 `CFK-<number>` identifier、project ID、title、body、status、priority (`none | low | medium | high | urgent`)、可空 assignee principal ID、deleted_at、deleted_by_principal_id、version |

@@ -237,8 +237,8 @@ cursor 不包含 secret，也不以保密性作为安全边界。服务端每次
 
 | Method | Path | 权限 | 语义 |
 | --- | --- | --- | --- |
-| GET/POST | `/api/v1/workspaces` | visible / Owner | 列表；创建一个 Workspace |
-| GET/PATCH/DELETE | `/api/v1/workspaces/{workspace_id}` | visible / Owner | 读取、改 display name、soft delete |
+| GET/POST | `/api/v1/workspaces` | visible / Owner | 列表；创建一个 Workspace，可选 description |
+| GET/PATCH/DELETE | `/api/v1/workspaces/{workspace_id}` | visible / Owner 或工作区管理员（PATCH）；DELETE 仅 Owner | 读取、改 display name / description、soft delete |
 | POST | `/api/v1/workspaces/{workspace_id}/commands/restore` | Owner | 原子恢复容器 |
 | GET/POST | `/api/v1/workspaces/{workspace_id}/projects` | visible / Owner | 列表；创建一个 Project |
 | GET/PATCH/DELETE | `/api/v1/workspaces/{workspace_id}/projects/{project_id}` | reader / Owner | 读取；修改 name/context；soft delete |
@@ -568,9 +568,11 @@ Cloudflare 在 Worker 执行前生成的 Error 1027、平台 429 或 HTML 5xx �
 
 ### 8.2 Workspace、Project 与状态
 
+Workspace `description` 是协作文本，不构成授权或公开加入摘要。schema 31 通过追加 nullable 列提供，既有数据默认 null，不回写历史。创建可省略；PATCH 使用独立 Workspace 请求，`display_name` 与 `description` 至少提供一项，并携带 `expected_version`。省略 description 保留原值，null 清空；沿用 Owner / 工作区管理员实时管理授权、CAS、幂等和原子审计。
+
 | 表 | 关键列 | 约束 |
 | --- | --- | --- |
-| `workspaces` | id, display_name, version, deleted_at/by, created/updated, created_operation_id, last_operation_id | UUID 唯一，名称可重复 |
+| `workspaces` | id, display_name, description, version, deleted_at/by, created/updated, created_operation_id, last_operation_id | UUID 唯一，名称可重复；description 可空，最大 32 KiB UTF-8 |
 | `projects` | id, workspace_id, display_name, context, issue_limit, comment_limit, principal_limit, version, deleted_at/by, created/updated, created_operation_id, last_operation_id | UUID 唯一，workspace_id 外键，名称可重复；context 最大 32 KiB；limits 为 null 或正整数，Public Join enabled 时三项必须非空 |
 | `project_usage` | project_id, active_issue_count, active_comment_count, active_principal_count, updated_at, last_operation_id | project_id PK；只为 Public Join enabled Project 保持当前行，三个 counter 必须 >= 0；关闭时删除 counter 行，重新开启时从权威表原子重算；enabled 期间与 create/soft-delete/restore、grant/revoke/regrant 在同一 transaction 增减 |
 | `public_join_policies` | project_id, public_id, public_summary, enabled_at/by, disabled_at/by, version, created_at, updated_at, last_operation_id | project_id PK、public_id unique；summary 有界；一 Project 一条当前 Policy；关闭后 public_id 不复用 |

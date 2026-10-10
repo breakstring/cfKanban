@@ -1,15 +1,16 @@
-# Issue 趋势与里程碑燃起图
+# Issue 趋势与里程碑完成进度
 
 - 状态：Frozen
 - 日期：2026-10-10
 - 执行任务：[CFK-715](https://cfkanban.dev/app/issues/CFK-715)
 - 确认依据：用户授权实施 CFK-715，确认第一版提供项目/工作区未完成存量、每日新增/完成，以及里程碑总范围/完成燃起图，并选择回填已有可恢复历史。
 - 维护修订：[CFK-730](https://cfkanban.dev/app/issues/CFK-730)，用户于 2026-10-10 授权将首次回填与小时维护分离，连续执行有界小批次并记录实际用量。本修订适用于 schema 30；schema 29 已发行的小时回填行为保留为历史合同。
+- 界面与范围修订：[CFK-731](https://cfkanban.dev/app/issues/CFK-731)，用户于 2026-10-10 确认工作区趋势合并至设置标签、只向工作区管理员开放并汇总全部未归档项目；取消项目子集与每日数值展开，里程碑图保留 burn-up 口径并命名为完成进度。工作区描述使用 schema 31；维护 runtime 明确支持 schema 30 / 31 并核对同版本 receipt、不可变 Service 与真实目标，首次安装限制保留。
 - 上游：Foundation、API / Schema、项目里程碑、Web UI、公共 CLI、容器清理及事件历史合同。
 
 ## 1. 第一版范围
 
-项目趋势统计该项目；工作区趋势只汇总当前 Principal 权限与 Session scope 交集内、当前未归档的项目，可显式选择其中的项目。工作区路径不扩大 Owner 的固定 Project Session；固定 Issue target 的 Session 不提供项目或工作区聚合，Web 隐藏其趋势入口。普通 reader 无需工作区管理权。返回实际项目集合，不能静默丢弃无权项目后仍声称统计整个工作区。
+项目趋势统计该项目，沿用项目 reader 权限。工作区趋势仅向具有本工作区管理范围的实例 Owner / 工作区管理员开放，汇总工作区全部当前未归档项目，不接受项目子集。普通成员及项目管理员不能读取工作区汇总。工作区路径不扩大 Owner 或局部管理员的固定 Project Session；固定 Issue target 的 Session 不提供项目或工作区聚合，Web 隐藏其趋势入口。返回真实全项目集合，不静默截断或以部分项目代替工作区。
 
 提供三类图：
 
@@ -42,7 +43,7 @@ schema 30 起首次回填由独立的本地 Node 维护流程执行，小时 Cro
 
 维护入口为部署 Skill 的 `maintenance trends inspect/plan/run` 和公共 CLI 的 `deploy trends inspect/plan/run`。`inspect` 与 `plan` 只读；`run` 是部署控制面中专用于派生投影的受控写入，不新增 Web/API 写入口，也不改变 Issue、Event、Grant 或领域权限。Web、日常 Skills/API 与 MCP 继续只读历史覆盖信息；Web 不持有本机或 Cloudflare 凭据。
 
-当前维护入口使用带固定 Worker deployment/version 证据的已验证升级 receipt；全新 schema 30 实例没有冻结旧历史队列，无需首次回填，bootstrap receipt 不满足此入口。计划固定已验证的私有升级 receipt、不可变 Service bundle 的完整 tree/工件摘要及回填算法版本，并绑定可信实例/origin、当前 Owner、准确 Cloudflare account/profile、Worker deployment/version、D1 UUID 和 schema 30。执行前重新核验本地来源、远端身份、绑定、版本及 migration ledger；不能从浮动源码加载算法、覆盖目标或提供任意 SQL。算法版本 1 在本地 Node 重放每个 Issue 的最多 100 个 Event，仅投影必要事件字段；按冻结水位倒序推进，游标不能原地循环。
+当前维护入口使用带固定 Worker deployment/version 证据的已验证升级 receipt；全新 schema 30 实例没有冻结旧历史队列，无需首次回填，bootstrap receipt 不满足此入口。计划固定已验证的私有升级 receipt、不可变 Service bundle 的完整 tree/工件摘要及回填算法版本，并绑定可信实例/origin、当前 Owner、准确 Cloudflare account/profile、Worker deployment/version、D1 UUID 和 真实 schema 30 或 31，receipt、Service manifest、健康检查及数据库元数据必须与计划目标版本一致；升级至 31 后使用新的升级 receipt 与相应不可变 Service 重新计划，不复用旧 schema 30 计划，也不提升既有预算。执行前重新核验本地来源、远端身份、绑定、版本及 migration ledger；不能从浮动源码加载算法、覆盖目标或提供任意 SQL。算法版本 1 在本地 Node 重放每个 Issue 的最多 100 个 Event，仅投影必要事件字段；按冻结水位倒序推进，游标不能原地循环。
 
 默认单次计划预算为：每批最多 8 个 Issue 页、最多 1000 页、最多 30 分钟、最多 3000 次 provider 请求，请求间隔至少 500ms，D1 读取 250000 行、写入 50000 行。预算只能减少工作量或放慢请求；开始下一页前保守预留读取 4000 行、写入 1000 行及控制请求。计划前核对当前账户用量和剩余额度，预算不代替账户其他流量的计费核验。到达预算、429、实际用量元数据缺失、队列无进展或目标漂移时停止，保留原计划和进度，不自动循环追赶。
 
@@ -58,12 +59,12 @@ schema 30 起首次回填由独立的本地 Node 维护流程执行，小时 Cro
 
 服务端维护按项目、按日的派生投影，里程碑使用同一口径。派生变化须与真实 Issue 操作处于同一原子单元；CAS 拒绝、配额拒绝、事务回滚和幂等重放不得重复统计。仅标题、正文、优先级等无关修改不额外写趋势计数。
 
-读取从当前真实存量逆推所选窗口内的日变化，不扫描窗口之前的所有累计历史。提供两个独立 reader GET：
+读取从当前真实存量逆推所选窗口内的日变化，不扫描窗口之前的所有累计历史。提供两个独立只读 GET（工作区 GET 要求工作区管理权限）：
 
 | Path | 参数 | operationId |
 | --- | --- | --- |
 | `/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/trends` | 单值 `days`（默认 30，1–365）；可选同项目 `milestone` UUID | `getProjectIssueTrends` |
-| `/api/v1/workspaces/{workspace_id}/issues/trends` | 同一 `days`；可重复 `project` UUID，默认当前有权项目，最多 100 | `getWorkspaceIssueTrends` |
+| `/api/v1/workspaces/{workspace_id}/issues/trends` | 同一 `days`；工作区全部未归档项目，最多 100；超过上限显式拒绝 | `getWorkspaceIssueTrends` |
 
 未知参数、重复单值参数、非法范围及跨 scope 项目或里程碑均拒绝；超过项目上限报错，不静默截断。响应含 `timezone=UTC`、`from_date`、`to_date`、`observed_at`、实际 `scope`、项目的 `stock_from` / `flow_from` 与 `history_state=pending|complete|partial`，以及每日 `total` / `done` / `canceled` / `unfinished` / `created` / `completed` / `reopened`。指标为非负安全整数或 null，存量与日变化来自一致数据库视图。
 
@@ -73,9 +74,9 @@ schema 30 起首次回填由独立的本地 Node 维护流程执行，小时 Cro
 
 ## 5. Web、Agent 与 CLI
 
-项目页在看板、列表、里程碑旁增加趋势入口；里程碑提供查看自身燃起图的入口。工作区趋势为独立普通只读页面，从工作区选择入口进入，不借用仅管理员可访问的管理页面。
+项目页在看板、列表、里程碑旁增加趋势入口；里程碑提供查看自身完成进度的入口（burn-up 口径）。工作区趋势位于工作区设置的「趋势」标签，仅实例 Owner / 本工作区管理员可见；工作区选择入口只提供「工作区设置」。旧工作区趋势 URL 进入同一设置页。
 
-页面异步加载，沿用项目全宽布局和主题，不引入新的图表依赖。SVG 折线共享 Y 轴、图例、日期轴和数值查看，并提供无障碍每日表格；键盘可操作。界面支持 English / 简体中文，以及加载、空范围、缺失历史、读取失败与重试。切换项目、身份或 Session 后丢弃旧数据与迟到结果。
+页面异步加载，沿用项目全宽布局和主题，不引入新的图表依赖。SVG 折线共享 Y 轴、图例、日期轴和数值查看，通过悬浮及键盘逐日聚焦提供日期和数值，不再提供每日数值展开表格；键盘可操作。界面支持 English / 简体中文，以及加载、空范围、缺失历史、读取失败与重试。切换项目、身份或 Session 后丢弃旧数据与迟到结果。
 
 API、CLI 和 Skills 使用相同时间窗口、覆盖信息和统计语义；MCP 的固定项目绑定不能被工作区趋势扩大。公开双语文档说明当前范围、完成次数与存量的区别、时区及历史边界。
 

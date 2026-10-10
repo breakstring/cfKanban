@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { API_COMMANDS } from '../src/catalog.mjs';
 import { parseArguments } from '../src/parser.mjs';
+import { helpDocument } from '../src/main.mjs';
 import { createContextResolver } from '../src/context.mjs';
 import { createCliRuntime } from '../src/runtime.mjs';
 import { createMcpStateFixture } from '../../../scripts/tests/mcp-fixture.mjs';
@@ -20,9 +21,13 @@ test('CLI trend commands accept only bounded date and explicit scope selectors',
   const parsed = await parseArguments(['issue', 'trends', '--days', '30', '--milestone', id]);
   assert.equal(parsed.command.operation, 'getProjectIssueTrends');
   assert.deepEqual(parsed.input, { days: 30, milestone: id });
-  const workspace = await parseArguments(['workspace', 'issue', 'trends', '--project', id, '--project', randomUUID(), '--days', '365']);
+  const workspace = await parseArguments(['workspace', 'issue', 'trends', '--days', '365']);
   assert.equal(workspace.command.operation, 'getWorkspaceIssueTrends');
-  assert.equal(workspace.input.project.length, 2);
+  assert.deepEqual(workspace.input, { days: 365 });
+  await assert.rejects(parseArguments(['workspace', 'issue', 'trends', '--project', id]));
+  const help=helpDocument('workspace issue trends','zh-CN');
+  assert.match(help.commands[0].description,/Owner.*工作区管理员.*全部未归档项目/);
+  assert.ok(help.commands[0].options.every(option=>option.flag!=='--project'));
   for (const value of ['0', '366', '2.5']) await assert.rejects(parseArguments(['issue', 'trends', '--days', value]), { code: 'CLI_INVALID_ARGUMENT' });
   for (const [flag, value] of [['status', 'done'], ['cursor', 'next'], ['milestone', 'none']]) await assert.rejects(parseArguments(['issue', 'trends', `--${flag}`, value]));
 });
@@ -36,7 +41,7 @@ test('Workspace trend context fills Workspace but does not inherit a repository 
   assert.equal(result.input.project, undefined);
 });
 
-test('CLI checks trend support and forwards UTC window, milestone and repeated Workspace Projects', async t => {
+test('CLI checks trend support and forwards UTC window and Project milestone without Workspace filters', async t => {
   const f = await createMcpStateFixture(t);
   const calls = [];
   const data = { points: [{ date: '2026-10-10', completed: 2, unfinished: null }] };
@@ -52,9 +57,8 @@ test('CLI checks trend support and forwards UTC window, milestone and repeated W
   assert.equal(projectUrl.pathname, `/api/v1/workspaces/${f.workspaceId}/projects/${f.projectId}/issues/trends`);
   assert.equal(projectUrl.searchParams.get('days'), '90');
   assert.equal(projectUrl.searchParams.get('milestone'), milestone);
-  const project = [f.projectId, randomUUID()];
-  await runtime.execute(command('workspace issue trends'), { instanceId: f.instanceId, workspace_id: f.workspaceId, project, days: 1 });
-  assert.deepEqual(new URL(calls.at(-1).apiPath, f.origin).searchParams.getAll('project'), project);
+  await runtime.execute(command('workspace issue trends'), { instanceId: f.instanceId, workspace_id: f.workspaceId, days: 1 });
+  assert.deepEqual([...new URL(calls.at(-1).apiPath, f.origin).searchParams], [['days','1']]);
   assert.ok(calls.every(request => request.method === 'GET' && request.body === undefined && request.idempotencyKey === undefined));
 });
 

@@ -9,11 +9,14 @@ import ErrorNotice from "../components/ErrorNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import ProjectSettingsHeader from "../components/ProjectSettingsHeader.vue";
+import ProjectViewIcon from "../components/ProjectViewIcon.vue";
 import PublicJoinRestorePreview from "../components/PublicJoinRestorePreview.vue";
 import ScopedInvitations from "../components/ScopedInvitations.vue";
 import { ApiProblem, apiRequest, hasUncertainWrite } from "../lib/api";
 import { captureCasConflict, markCasReadbackComplete, markCasReadbackFailed, type CasConflictState } from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
+import { canReadIssueTrends } from "../lib/issue-trends";
+import { lazyPage } from "../lib/lazy-page";
 import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor } from "../lib/pagination";
 import { navigate } from "../lib/router";
@@ -25,6 +28,7 @@ import { changedTextFields, useSessionTextDraft } from "../lib/session-drafts";
 import type { AccessSource, AdministratorCandidate, AdministratorResource, ContainerResource, GrantResource, ListResult, MemberCandidate, ProjectMember, ProjectStatusResource, WebSessionView } from "../types";
 
 const props = defineProps<{ workspaceId: string; projectId?: string | undefined; session: WebSessionView }>();
+const IssueTrendsView = lazyPage(() => import("./IssueTrendsView.vue"));
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
 const ui = (en: string, zh: string) => locale.value === "zh-CN" ? zh : en;
 const workspacePath = `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}`;
@@ -40,12 +44,13 @@ const cursors = ref<Record<string, string | null>>({});
 const loading = ref(true);
 const busy = ref(false);
 const archived = ref(false);
-const draft = ref({ display_name: "", context: "" });
+const draft = ref({ display_name: "", context: "", description: "" });
 const projectName = ref("");
 let projectNameBaseline = "";
 const requestedSections = new URLSearchParams(window.location.search).getAll("section");
-const section = ref<"projects" | "members" | "settings">(requestedSections.length === 1
-  && (requestedSections[0] === "members" || (!props.projectId && requestedSections[0] === "settings"))
+type Section = "projects" | "members" | "settings" | "trends";
+const section = ref<Section>(!props.projectId && /\/app\/w\/[^/]+\/trends$/.test(window.location.pathname) ? "trends" : requestedSections.length === 1
+  && (requestedSections[0] === "members" || (!props.projectId && (requestedSections[0] === "settings" || requestedSections[0] === "trends")))
   ? requestedSections[0] : props.projectId ? "settings" : "projects");
 const returnPath = new URLSearchParams(window.location.search).get("from");
 const returnProject = computed(() => projectReturnTarget(returnPath, props.session.allowed_scope.projects ?? []));
@@ -60,7 +65,11 @@ let mounted = true;
 let generation = 0;
 const can = (action: string) => resource.value?.allowed_actions?.includes(action) ?? false;
 const active = computed(() => resource.value?.deleted_at === null);
-protectNavigationDraft(() => busy.value || !!projectName.value.trim() || (!!resource.value && (draft.value.display_name !== resource.value.display_name || draft.value.context !== (resource.value.context ?? ""))));
+const canReadWorkspaceTrends = computed(() => !props.projectId && active.value && can("update") && canReadIssueTrends(props.session, props.workspaceId));
+const supportsDescription = computed(() => !props.projectId && resource.value?.description !== undefined);
+const workspaceSections = computed<Section[]>(() => ["projects", "members", "settings", ...(canReadWorkspaceTrends.value ? ["trends" as const] : [])]);
+protectNavigationDraft(() => busy.value || !!projectName.value.trim() || (!!resource.value && can("update") && (draft.value.display_name !== resource.value.display_name
+  || (props.projectId ? draft.value.context !== (resource.value.context ?? "") : supportsDescription.value && draft.value.description !== (resource.value.description ?? "")))));
 const grantsPath = `/api/v1/admin/projects/${encodeURIComponent(props.projectId ?? "")}/grants`;
 const endpoints: Record<string, string> = {
   administrators: `${resourcePath}/administrators`, members: `${resourcePath}/members`, grants: grantsPath,
@@ -94,7 +103,8 @@ useSessionTextDraft({
   label: { en: "Container settings", zh: "容器设置" }, target: textDraftTarget,
   capture: () => resource.value === null ? null : changedTextFields({
     display_name: [draft.value.display_name, resource.value.display_name],
-    ...(props.projectId ? { context: [draft.value.context, resource.value.context ?? ""] as const } : {}),
+    ...(props.projectId ? { context: [draft.value.context, resource.value.context ?? ""] as const }
+      : supportsDescription.value ? { description: [draft.value.description, resource.value.description ?? ""] as const } : {}),
   }),
   canRestore: target => textDraftReady(target, "update") && !hasUncertainWrite(resourcePath),
   uncertain: () => textWriteUncertain(resourcePath),
@@ -104,10 +114,13 @@ useSessionTextDraft({
     if (!isCurrent() || current === null || hasUncertainWrite(resourcePath)) return false;
     const verified = await verifyDraftPrincipal(target, "update", readGeneration, isCurrent);
     if (!isCurrent() || !verified || hasUncertainWrite(resourcePath)) return false;
-    const localFields = resource.value ? changedTextFields({ display_name: [draft.value.display_name, resource.value.display_name], context: [draft.value.context, resource.value.context ?? ""] }) : null;
+    const localFields = resource.value ? changedTextFields({ display_name: [draft.value.display_name, resource.value.display_name],
+      ...(props.projectId ? { context: [draft.value.context, resource.value.context ?? ""] as const }
+        : supportsDescription.value ? { description: [draft.value.description, resource.value.description ?? ""] as const } : {}) }) : null;
     resource.value = current;
     draft.value = { display_name: fields.display_name ?? localFields?.display_name ?? current.display_name,
-      context: props.projectId ? fields.context ?? localFields?.context ?? current.context ?? "" : "" };
+      context: props.projectId ? fields.context ?? localFields?.context ?? current.context ?? "" : "",
+      description: !props.projectId && current.description !== undefined ? fields.description ?? localFields?.description ?? current.description ?? "" : "" };
     section.value = "settings";
     return true;
   },
@@ -196,16 +209,20 @@ async function load(resetDraft = false): Promise<void> {
     clearFacts();
     resource.value = result;
     if (!hasManagementActions(result)) return;
-    if (resetDraft) draft.value = { display_name: result.display_name, context: result.context ?? "" };
+    if (resetDraft) draft.value = { display_name: result.display_name, context: result.context ?? "", description: result.description ?? "" };
     emit("context", { label: result.display_name, role: ui("Scoped management", "范围管理") });
     if (result.deleted_at !== null) {
       if (props.projectId) section.value = "settings";
       return;
     }
+    if (section.value === "trends") {
+      if (canReadWorkspaceTrends.value) return;
+      section.value = "settings";
+    }
     const reads: Promise<unknown>[] = [];
-    if (!props.projectId || section.value === "members") reads.push(readPage("administrators"));
+    if (section.value === "members") reads.push(readPage("administrators"));
     if (props.projectId && section.value === "members" && can("manage_members")) reads.push(readPage("members"), readPage("grants"));
-    if (!props.projectId && can("create_project")) reads.push(readPage("projects"));
+    if (!props.projectId && section.value === "projects" && can("create_project")) reads.push(readPage("projects"));
     if (props.projectId && section.value !== "members" && can("manage_status_names")) reads.push((async () => {
       const result = await apiRequest<ListResult<ProjectStatusResource>>(`${resourcePath}/statuses`);
       if (!mounted || currentGeneration !== generation) return;
@@ -267,7 +284,13 @@ async function write(path: string, method: string, body?: unknown, nextArchived?
 
 function saveSettings(): void {
   if (!resource.value || !can("update")) return;
-  void write(resourcePath, "PATCH", { display_name: draft.value.display_name.trim(), expected_version: resource.value.version, ...(props.projectId ? { context: draft.value.context || null } : {}) });
+  void write(resourcePath, "PATCH", { display_name: draft.value.display_name.trim(), expected_version: resource.value.version,
+    ...(props.projectId ? { context: draft.value.context || null } : supportsDescription.value ? { description: draft.value.description || null } : {}) });
+}
+function selectSection(value: Section): void {
+  if (value === section.value || busy.value || loading.value) return;
+  section.value = value;
+  void refresh();
 }
 function grantAdministrator(item?: AdministratorResource): void {
   if (!can("manage_administrators")) return;
@@ -347,15 +370,16 @@ async function returnToProject(): Promise<void> {
 </script>
 
 <template>
-  <main class="page-shell scoped-management">
+  <main class="page-shell scoped-management" :class="{ 'scoped-management--workspace': !projectId }">
     <ProjectSettingsHeader v-if="projectId" :workspace-id="workspaceId" :project-id="projectId" :section="section === 'members' ? 'members' : 'management'" :project="resource" :session="session" @navigate="navigate">
       <template #actions><UButton color="neutral" variant="ghost" type="button" :disabled="busy || loading" @click="refresh">{{ t('action.refresh') }}</UButton></template>
     </ProjectSettingsHeader>
     <header v-else class="page-title-block">
       <UButton color="neutral" variant="ghost" v-if="ownerReturnPath" class="text-button" type="button" @click="navigate(ownerReturnPath)">← {{ ui('Back to management', '返回管理中心') }}</UButton>
       <UButton color="neutral" variant="ghost" v-else-if="returnProject" class="text-button" type="button" @click="returnToProject">← {{ ui('Back to', '返回') }} {{ returnProject.workspace_display_name }} / {{ returnProject.project_display_name }}</UButton>
-      <p class="eyebrow">{{ ui('Workspace management', '工作区管理') }}</p>
+      <p class="eyebrow">{{ ui('Workspace settings', '工作区设置') }}</p>
       <h1>{{ resource?.display_name ?? ui('Management', '管理') }}</h1>
+      <p v-if="resource?.description" class="workspace-description">{{ resource.description }}</p>
       <div class="form-actions">
         <UButton color="neutral" variant="ghost" class="text-button" type="button" @click="navigate('/app')">{{ t('project.choose') }}</UButton>
         <UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="busy || loading" @click="refresh">{{ t('action.refresh') }}</UButton>
@@ -366,13 +390,15 @@ async function returnToProject(): Promise<void> {
     <PageState :loading="loading" />
     <p v-if="!loading && resource && !hasManagementActions(resource)">{{ ui('Management is unavailable in this session.', '当前会话没有此范围的管理权限。') }}</p>
     <template v-if="!loading && resource && hasManagementActions(resource)">
-      <nav v-if="!projectId" class="management-tabs" :aria-label="ui('Workspace management sections', '工作区管理分区')">
-        <UButton color="neutral" variant="ghost" v-for="key in (['projects', 'members', 'settings'] as const)" :key="key" type="button" class="text-button" :aria-current="section === key ? 'page' : undefined" @click="section = key">{{ key === 'projects' ? ui('Projects', '项目') : key === 'members' ? ui('Members and permissions', '成员与权限') : ui('Workspace settings', '工作区设置') }}</UButton>
+      <nav v-if="!projectId" class="management-tabs" :aria-label="ui('Workspace settings sections', '工作区设置分区')">
+        <UButton color="neutral" variant="ghost" v-for="key in workspaceSections" :key="key" type="button" class="text-button" :disabled="busy || loading" :aria-current="section === key ? 'page' : undefined" @click="selectSection(key)"><ProjectViewIcon v-if="key === 'trends'" view="trends" />{{ key === 'projects' ? ui('Projects', '项目') : key === 'members' ? ui('Members and permissions', '成员与权限') : key === 'trends' ? ui('Trends', '趋势') : ui('Settings', '设置') }}</UButton>
       </nav>
+      <IssueTrendsView v-if="section === 'trends' && canReadWorkspaceTrends" :workspace-id="workspaceId" :session="session" embedded />
       <form v-if="active && can('update') && (!projectId || section !== 'members')" v-show="projectId || section === 'settings'" class="form-stack management-section" @submit.prevent="saveSettings">
         <h2>{{ ui('Settings', '设置') }}</h2>
         <label>{{ ui('Name', '名称') }}<UInput class="w-full" v-model="draft.display_name" required maxlength="128" /></label>
         <label v-if="projectId">{{ ui('Project context', '项目说明') }}<UTextarea class="w-full" v-model="draft.context" :rows="4" /></label>
+        <label v-else-if="supportsDescription">{{ ui('Workspace description (optional)', '工作区描述（选填）') }}<UTextarea class="w-full" v-model="draft.description" :rows="4" /></label>
         <div class="form-actions"><UButton color="primary" variant="solid" class="primary-button" :disabled="busy" type="submit">{{ t('action.save') }}</UButton></div>
       </form>
       <section v-if="statuses.length && can('manage_status_names') && section !== 'members'" class="management-section">
@@ -457,6 +483,9 @@ async function returnToProject(): Promise<void> {
 
 <style scoped>
 .scoped-management { max-width: 1040px; }
+.scoped-management--workspace { max-width: none; }
+.scoped-management--workspace .form-stack { max-width: 720px; }
+.workspace-description { white-space: pre-wrap; overflow-wrap: anywhere; }
 .management-section { padding-block: var(--space-6, 24px); border-bottom: 1px solid var(--color-border); }
 .management-section > h2 { margin-top: 0; }
 .management-section > h3 { margin-block: 24px 16px; }

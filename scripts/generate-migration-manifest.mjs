@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 30,
+  schema_version: 31,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -361,6 +361,13 @@ const manifest = {
         triggers: ["issue_trend_backfill_commit"],
       },
       expected_data: { instance_meta_schema_version_at_least: 30, allow_uninitialized: true },
+    },
+    {
+      sequence: 31, name: "0031_workspace_description.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0031_workspace_description.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: { columns: ["workspaces.description"] },
+      expected_data: { instance_meta_schema_version_at_least: 31, allow_uninitialized: true },
     },
   ],
 };

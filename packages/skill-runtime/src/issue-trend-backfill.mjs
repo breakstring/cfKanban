@@ -17,6 +17,7 @@ import { trustedApiRequest } from './transport.mjs';
 import { assertNoSymlinkPath, atomicWriteJson, canonicalDigest, ensurePrivateDirectory, readJson, requireHttpsOrigin, requireString, requireUuid, sha256Bytes } from './utils.mjs';
 
 export const DEFAULT_TREND_BACKFILL_BUDGET = Object.freeze({ batchSize: 8, maxPages: 1000, maxDurationMs: 30 * 60 * 1000, requestIntervalMs: 500, maxRequests: 3000, rowsRead: 250000, rowsWritten: 50000 });
+const SUPPORTED_TREND_BACKFILL_SCHEMAS = Object.freeze([30, 31]);
 const LEASE_MS = 120000;
 const CONTROL_SQL = 'SELECT id,run_id,lease_until,fence,last_batch_id,last_issue_id,last_version FROM issue_trend_backfill_control WHERE id=1 LIMIT 1';
 const STATUS_SQL = 'SELECT COUNT(*) AS project_count,COALESCE(SUM(pending_jobs),0) AS pending_jobs,COALESCE(SUM(partial),0) AS partial_projects FROM issue_trend_projects';
@@ -85,13 +86,14 @@ async function localEvidence(input) {
   if (path.dirname(receiptPath) !== paths.receiptsRoot) throw toolError('TREND_BACKFILL_RECEIPT_REQUIRED', 'Use the existing private instance deployment receipt');
   await assertNoSymlinkPath(receiptPath, stateRoot); await validatePrivatePath(receiptPath, 'file');
   const receipt = await readJson(receiptPath), release = receipt.service_release?.after ?? receipt.service_release;
-  if (receipt.kind !== 'cfkanban_instance_upgrade_receipt' || receipt.instance?.id !== instanceId || receipt.instance.schema_version !== 30 || receipt.verification?.canonical_release !== true || receipt.verification?.worker_deployment_readback !== true || receipt.verification?.migration_ledger_and_schema !== true || metadata.instance_id !== instanceId || metadata.trusted_api_origin !== receipt.instance.api_origin || metadata.origin_version !== receipt.instance.origin_version) throw toolError('TREND_BACKFILL_RECEIPT_DRIFT', 'Backfill requires a verified schema 30 upgrade receipt matching the existing trusted instance');
+  const schemaVersion = receipt.instance?.schema_version;
+  if (receipt.kind !== 'cfkanban_instance_upgrade_receipt' || receipt.instance?.id !== instanceId || !SUPPORTED_TREND_BACKFILL_SCHEMAS.includes(schemaVersion) || receipt.verification?.canonical_release !== true || receipt.verification?.worker_deployment_readback !== true || receipt.verification?.migration_ledger_and_schema !== true || metadata.instance_id !== instanceId || metadata.trusted_api_origin !== receipt.instance.api_origin || metadata.origin_version !== receipt.instance.origin_version) throw toolError('TREND_BACKFILL_RECEIPT_DRIFT', 'Backfill requires a verified schema 30 or 31 upgrade receipt matching the existing trusted instance');
   const bundleRoot = path.resolve(requireString(input.serviceBundleRoot, 'service_bundle_root', { max: 4096 }));
   const canonicalRoot = path.join(stateRoot, 'service-releases', 'versions', release.service_bundle_version);
   if (path.dirname(bundleRoot) !== canonicalRoot) throw toolError('TREND_BACKFILL_SOURCE_REQUIRED', 'Use the matching immutable canonical Service bundle cache');
   const bundle = await verifyInstalledServiceBundle({ bundleRoot, expectedVersion: release.service_bundle_version, expectedSha256: release.service_bundle_sha256, expectedPublisher: release.publisher, expectedSource: release.service_bundle_source });
   const manifest = await readJson(path.join(bundleRoot, 'migrations/manifest.json'));
-  if (manifest.schema_version !== 30) throw toolError('TREND_BACKFILL_SOURCE_REQUIRED', 'The verified Service must declare schema 30');
+  if (manifest.schema_version !== schemaVersion) throw toolError('TREND_BACKFILL_SOURCE_REQUIRED', 'The verified Service schema must match its schema 30 or 31 upgrade receipt');
   const serviceVersion = await readServiceApiVersion(bundleRoot, { expectedReleaseVersion: release.service_bundle_version, expectedApiVersion: receipt.instance.service_version });
   const modulePath = path.join(bundleRoot, 'dist/issue-trend-backfill.mjs');
   await assertNoSymlinkPath(modulePath, bundleRoot);
@@ -103,7 +105,7 @@ async function localEvidence(input) {
   const target = { instance_id: instanceId, api_origin: requireHttpsOrigin(receipt.instance.api_origin), origin_version: receipt.instance.origin_version,
     account_id: requireString(cloud.account_id, 'account_id', { max: 128 }), cloudflare_profile: cloud.profile ?? null, context_directory: cloud.context_directory ?? null,
     worker_name: requireString(cloud.worker.name, 'worker_name', { max: 63 }), worker_version_id: requireUuid(cloud.worker.after_version_id ?? cloud.worker.version_id, 'worker_version_id'), worker_deployment_id: requireUuid(cloud.worker.after_deployment_id ?? cloud.worker.deployment_id, 'worker_deployment_id'),
-    d1_name: requireString(cloud.d1.name, 'd1_name', { max: 63 }), database_id: requireUuid(cloud.d1.database_id, 'database_id'), release_version: release.service_bundle_version, service_version: serviceVersion, schema_version: 30, owner: receipt.owner };
+    d1_name: requireString(cloud.d1.name, 'd1_name', { max: 63 }), database_id: requireUuid(cloud.d1.database_id, 'database_id'), release_version: release.service_bundle_version, service_version: serviceVersion, schema_version: schemaVersion, owner: receipt.owner };
   if (!/^[a-f0-9]{32}$/u.test(target.account_id) || ![target.worker_name, target.d1_name].every(value => /^[a-z0-9-]+$/u.test(value)) || (target.cloudflare_profile === null) === (target.context_directory === null)) throw toolError('TREND_BACKFILL_RECEIPT_DRIFT', 'The receipt must identify one exact account, resource pair and authentication context');
   const credential = await loadCurrentCredentialSecret({ stateRoot, instanceId });
   if (credential.metadata.principal_id !== target.owner.principal_id || credential.metadata.credential_id !== target.owner.credential_id || credential.metadata.fingerprint !== target.owner.credential_fingerprint || credential.metadata.state !== 'current') throw toolError('TREND_BACKFILL_OWNER_DRIFT', 'The current private Owner identity differs from the deployment receipt');
@@ -151,7 +153,8 @@ async function remoteEvidence(input, local, meter, record = async () => {}) {
   for (const sql of MIGRATION_SQL) migration.push(await query(sql));
   const parsed = parseMigrationReadbackOutput(JSON.stringify(migration));
   const state = reconcileMigrationState({ manifest: local.manifest, ledger: parsed.ledger, schema: parsed.schema });
-  if (!state.safe_to_continue || state.migrations.some(entry => entry.state !== 'applied')) throw stop('migration_ledger_drift');
+  if (!state.safe_to_continue || state.migrations.some(entry => entry.state !== 'applied')
+    || parsed.schema.data?.instance_meta?.row_count !== 1 || parsed.schema.data.instance_meta.schema_version !== t.schema_version) throw stop('migration_ledger_drift');
   const fetchImpl = meter.fetch;
   const discovery = validateDiscovery(await fetchDiscovery(t.api_origin, fetchImpl), t.api_origin);
   const health = await requestJson(t.api_origin, '/healthz', { fetchImpl });
@@ -160,7 +163,7 @@ async function remoteEvidence(input, local, meter, record = async () => {}) {
     if (!value.ok) throw stop('owner_readback_failed'); return value.data;
   };
   const meta = await readback('/api/v1/meta'), me = await readback('/api/v1/me');
-  if (discovery.instance_id !== t.instance_id || discovery.origin_version !== t.origin_version || discovery.preferred_api_origin !== t.api_origin || discovery.release_version !== t.release_version || discovery.service_version !== t.service_version || health.release_version !== t.release_version || health.service_version !== t.service_version || health.schema_version !== 30 || health.d1 !== 'reachable' || meta.instance_id !== t.instance_id || meta.release_version !== t.release_version || meta.service_version !== t.service_version || meta.schema_version !== 30 || meta.observed_origin !== t.api_origin || meta.preferred_api_origin !== t.api_origin || meta.origin_version !== t.origin_version || meta.principal?.id !== t.owner.principal_id || meta.principal?.is_owner !== true || me.id !== t.owner.principal_id || me.principal_id !== t.owner.principal_id || me.display_name !== t.owner.display_name || me.is_owner !== true || me.credential?.id !== t.owner.credential_id || me.credential?.fingerprint !== t.owner.credential_fingerprint) throw stop('instance_identity_drift');
+  if (discovery.instance_id !== t.instance_id || discovery.origin_version !== t.origin_version || discovery.preferred_api_origin !== t.api_origin || discovery.release_version !== t.release_version || discovery.service_version !== t.service_version || health.release_version !== t.release_version || health.service_version !== t.service_version || health.schema_version !== t.schema_version || health.d1 !== 'reachable' || meta.instance_id !== t.instance_id || meta.release_version !== t.release_version || meta.service_version !== t.service_version || meta.schema_version !== t.schema_version || meta.observed_origin !== t.api_origin || meta.preferred_api_origin !== t.api_origin || meta.origin_version !== t.origin_version || meta.principal?.id !== t.owner.principal_id || meta.principal?.is_owner !== true || me.id !== t.owner.principal_id || me.principal_id !== t.owner.principal_id || me.display_name !== t.owner.display_name || me.is_owner !== true || me.credential?.id !== t.owner.credential_id || me.credential?.fingerprint !== t.owner.credential_fingerprint) throw stop('instance_identity_drift');
   const summary = (await query(STATUS_SQL)).results[0], queue = (await query(QUEUE_SQL)).results[0], lease = (await query(CONTROL_SQL)).results[0];
   if (!Number.isSafeInteger(summary?.pending_jobs) || queue?.pending_jobs !== summary.pending_jobs || !Number.isSafeInteger(lease?.fence)) throw stop('queue_state_drift');
   return { query, assertWorker, summary: { ...summary, queue_pending_jobs: queue.pending_jobs }, lease };

@@ -1,6 +1,8 @@
 # Issue 趋势
 
-在网页中进入项目或工作区，打开**趋势**，查看未完成 Issue 存量和每日新增、完成次数。在项目内选择里程碑，可对比其总范围和当前完成范围随日期的变化。图表按 Issue 计件，不代表估算工作量；父 Issue 与子 Issue 各自计一件。
+在网页中进入项目的**趋势**，或由 Owner / 工作区管理员打开**工作区设置 → 趋势**，查看未完成 Issue 存量和每日新增、完成次数。在项目内选择里程碑，可对比其总范围和当前完成范围随日期的变化。图表按 Issue 计件，不代表估算工作量；父 Issue 与子 Issue 各自计一件。
+
+里程碑的**完成进度**图展示总范围与已完成存量，即 burn-up（燃起）口径。燃尽图展示剩余量；这里保留范围和完成量两条线，便于识别里程碑范围变化。悬浮或用键盘聚焦日期即可查看数值。
 
 ## 日期与统计口径
 
@@ -15,15 +17,15 @@
 
 ## 范围与历史覆盖
 
-工作区图表只统计你当前有权读取、且位于本次登录范围内的活跃项目。项目范围登录不会显示其他无权项目。对比报告时查看实际返回的项目列表：权限变化或归档项目会改变统计范围。恢复项目后，可重新读取其可用历史；永久删除项目后无法恢复它的历史。
+工作区图表固定汇总该工作区全部未归档项目，不需要选择项目。只有具有相应工作区管理范围的 Owner / 工作区管理员可以查看；普通成员及项目管理员仍可查看各自有权项目的趋势。固定项目登录不能查看工作区汇总。归档项目会改变统计范围。恢复项目后，可重新读取其可用历史；永久删除项目后无法恢复它的历史。
 
 登录范围固定为单个 Issue 时不提供项目或工作区趋势。需要查看汇总时，让 Agent 重新打开项目，或使用有相应项目范围的登录。
 
-已保存且可恢复的历史会纳入图表。覆盖状态为 `pending` 时，实例维护者可以[按有界批次执行首次回填](../deployment/updates.md#补齐已有趋势历史)；打开或刷新图表不会启动回填。schema 30 起，它与小时维护分开执行。队列处理后刷新图表，查看经过校验的覆盖范围。
+已保存且可恢复的历史会纳入图表。覆盖状态为 `pending` 时，实例维护者可以[按有界批次执行首次回填](../deployment/updates.md#补齐已有趋势历史)；打开或刷新图表不会启动回填。schema 30 起，它与小时维护分开执行。队列处理后刷新图表。历史正常时页面只显示图表；不可用或仍待补齐时显示简短提示，详细覆盖信息仍保留在 API 响应中。
 
 缺失区段表示**不可用**，不是零，图表会留出空段。响应逐项目提供 `stock_from`、`flow_from` 与 `history_state`（`pending`、`complete`、`partial`），存量和操作次数的历史起点可能不同。处理完整个队列也无法恢复缺失或不可靠的旧事件，因此仍可能保留 `partial` 和断点。工作区汇总中，只要有一个纳入的项目缺少某项指标的覆盖，该指标就显示不可用。
 
-趋势使用自己的日期与范围选择，看板或列表的状态、负责人、优先级、标签和搜索条件不作用于图表。Issue 可以不属于里程碑，维护方式见[项目里程碑](milestones.md)。
+项目趋势可选择里程碑；工作区趋势只选择日期，看板或列表的状态、负责人、优先级、标签和搜索条件不作用于图表。Issue 可以不属于里程碑，维护方式见[项目里程碑](milestones.md)。
 
 ## Agent 与终端
 
@@ -32,7 +34,7 @@
 ```
 
 ```text
-对比本工作区最近 90 天的 Issue 趋势，告诉我实际包含哪些有权项目，不要把缺失历史当成零。
+查看本工作区全部未归档项目最近 90 天的 Issue 趋势，不要把缺失历史当成零。
 ```
 
 ```text
@@ -44,9 +46,8 @@
 ```sh
 cfkanban issue trends --days 30 --json
 cfkanban workspace issue trends --workspace-id workspace-uuid --days 90 --json
-cfkanban workspace issue trends --workspace-id workspace-uuid --project project-uuid --days 30 --json
 ```
 
 查询里程碑时，在 `issue trends` 加上 `--milestone <里程碑 UUID>`。MCP 提供 `cfkanban_project_issue_trends` 和 `cfkanban_workspace_issue_trends`，宿主可能带命名空间前缀。它们读取相同的服务端统计，返回历史覆盖与实际范围。旧服务未声明 `issue_trends` 时应说明能力缺失，不遍历 Issue 列表编造历史。
 
-REST 提供 `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/trends?days=30`（可选 `milestone`）及 `GET /api/v1/workspaces/{workspace_id}/issues/trends?days=30`（可重复 `project` UUID，最多 100 个）。不支持分页或普通 Issue 筛选，显式无权目标和未知参数会被拒绝。所有读取沿用服务端实时权限，查看图表不会授予额外权限。
+REST 提供 `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/trends?days=30`（可选 `milestone`）及 `GET /api/v1/workspaces/{workspace_id}/issues/trends?days=30`（仅 `days`；最多汇总 100 个未归档项目，超限明确报错）。不支持分页或普通 Issue 筛选，显式无权目标和未知参数会被拒绝。工作区接口要求相应工作区管理权限；所有读取沿用服务端实时权限，查看图表不会授予额外权限。

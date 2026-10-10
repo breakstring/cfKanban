@@ -139,7 +139,7 @@ The local browser and host workbenches show current membership in Issue details.
 
 ## Issue trends
 
-Use discovered `cfkanban_project_issue_trends` / `cfkanban_workspace_issue_trends`, or public CLI `issue trends` / `workspace issue trends`, for authorized daily trends. Confirm returned scope and coverage; unavailable values are null, never zero. Read [English](references/workflows.md#issue-trends) or [简体中文](references/workflows.zh-CN.md#issue-趋势) for stock, flow, dates and milestone semantics. Missing `issue_trends` capability means unsupported; do not reconstruct history from ordinary Issue pages.
+Use discovered `cfkanban_project_issue_trends` / `cfkanban_workspace_issue_trends`, or public CLI `issue trends` / `workspace issue trends`, for authorized daily trends. Project/milestone trends use current Project read permission; Workspace trends require instance Owner or Workspace administrator authorization and a Session that permits Workspace management, and include every active Project without selection. Project-bound panels cannot read Workspace aggregates. Confirm returned scope and coverage; unavailable values are null, never zero. Read [English](references/workflows.md#issue-trends) or [简体中文](references/workflows.zh-CN.md#issue-趋势) for stock, flow, dates and milestone semantics. Missing `issue_trends` capability means unsupported; do not reconstruct history from ordinary Issue pages.
 
 ## Issue priority requests
 

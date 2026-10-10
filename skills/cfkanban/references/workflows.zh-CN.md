@@ -18,7 +18,7 @@
 | Issue 列表与详情 | `cfkanban_issues_list`、`cfkanban_issues_get` | 列表必须带 `project_ids`，或明确接受获授权的 `allow_unfiltered:true`；详情用 `identifier`。翻页保留全部筛选。 |
 | Issue 创建、编辑与完成 | `cfkanban_issues_create`、`cfkanban_issues_update`、`cfkanban_issues_complete` | 一个 `idempotency_key` 及适用的当前版本。更新的 `changes` 只支持标题、描述、非 done 状态、优先级、负责人 ID 和可选里程碑 ID。完成及不可变记录由 complete 负责。 |
 | 项目既有标签与 Issue 关联 | `cfkanban_labels_list`、`cfkanban_issues_labels_add`、`cfkanban_issues_labels_remove` | 标签列表携带准确工作区/项目 ID，按需有界分页；单次以一个既有 `label_id`、Issue 当前 `expected_version` 和一个 `idempotency_key` 添加或移除关联，不提供标签创建或管理。 |
-| Issue 趋势 | `cfkanban_project_issue_trends`、`cfkanban_workspace_issue_trends` | 明确实例/工作区及可选项目选择；项目趋势需要项目 UUID。UTC 日默认 30、最多 365，保留 null 历史及返回的覆盖信息。 |
+| Issue 趋势 | `cfkanban_project_issue_trends`、`cfkanban_workspace_issue_trends` | 明确实例/工作区；项目趋势需要项目 UUID。工作区趋势仅 Owner 或该工作区管理员可读，汇总全部未归档项目，不接受项目筛选。UTC 日默认 30、最多 365，保留 null 历史及返回的覆盖信息。 |
 | 项目里程碑 | `cfkanban_milestones_list`、`cfkanban_milestones_get`、`cfkanban_milestones_create`、`cfkanban_milestones_update` | 列表/创建携带明确项目范围；读取/更新使用准确里程碑 UUID。创建带稳定键，更新使用当前 CAS 且不携带幂等键。 |
 | 评论 | `cfkanban_comments_list`、`cfkanban_comments_create` | 明确 Issue 编号；创建追加一条正文，可回复 Comment。 |
 | 关系 | `cfkanban_relations_list`、`cfkanban_relations_create`、`cfkanban_relations_delete` | 创建/删除按操作携带关系及两端的版本。Service 核验工作区与项目权限。 |
@@ -483,13 +483,13 @@ Principal 名称从 schema 8 起在整个实例内唯一。首尾去空白并 NF
 
 ## Issue 趋势
 
-优先使用发现的 `cfkanban_project_issue_trends`，提供明确 `instance_id`、`workspace_id`、`project_id`，可选 `days` 与一个 `milestone` UUID；工作区使用 `cfkanban_workspace_issue_trends`，提供实例/工作区，可选 `project_ids`（1–100 个 UUID）及 `days`。绑定项目的宿主会将工作区读取限定在绑定项目内，并拒绝显式外部目标。没有 MCP 时使用公共 CLI `issue trends` / `workspace issue trends`，或脚本 `api request` 读取 `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/trends?days=30`（可选里程碑 UUID）及 `GET /api/v1/workspaces/{workspace_id}/issues/trends?days=30`（可重复项目 UUID）。必须声明 `issue_trends`；缺失或 false 表示不支持，不遍历分页 Issue 列表重建历史。
+优先使用发现的 `cfkanban_project_issue_trends`，提供明确 `instance_id`、`workspace_id`、`project_id`，可选 `days` 与一个 `milestone` UUID；工作区使用 `cfkanban_workspace_issue_trends`，提供实例/工作区及可选 `days`。工作区趋势要求当前实例 Owner 或该工作区管理员权限，并且 Session 允许工作区管理；固定 Project/Issue Session 和绑定项目的宿主面板不能读取工作区聚合。没有 MCP 时使用公共 CLI `issue trends` / `workspace issue trends`，或脚本 `api request` 读取 `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/trends?days=30`（可选里程碑 UUID）及 `GET /api/v1/workspaces/{workspace_id}/issues/trends?days=30`（工作区全部未归档项目，不接受项目筛选）。必须声明 `issue_trends`；缺失或 false 表示不支持，不遍历分页 Issue 列表重建历史。
 
-`days` 默认 30，允许 1–365 个包含今天的 UTC 自然日。过去存量为日终值，今天的点截至 `observed_at`，尚未结束。不接受分页或普通 Issue 筛选。工作区省略项目选择时，使用当前有权读取的活跃项目与 Session scope 的交集；显式无权目标会被拒绝。报告 `scope.project_ids` 与项目名称，不假定它代表整个工作区。
+`days` 默认 30，允许 1–365 个包含今天的 UTC 自然日。过去存量为日终值，今天的点截至 `observed_at`，尚未结束。不接受分页或普通 Issue 筛选。工作区趋势汇总此工作区当前全部未归档项目，包括没有直接普通 Grant 的项目；空工作区可读，超过 100 个活跃项目显式报错，不静默截断。不接受项目选择，返回的 `scope.project_ids` 保存实际工作区范围。
 
 父/子 Issue 各自计件。`unfinished` 是待整理 + 待办 + 进行中；取消与完成分开。`created` 记录原始创建，`completed` 统计每次进入 done，`reopened` 记录从 done 回到 backlog、todo 或 in_progress；重开后再次完成会再次计入。删除/恢复改变存量，恢复和里程碑归属变化不算新增或完成。单里程碑比较每日实际归属的 `total`、`done`，不能用今天的成员倒推过去；范围可以减少，不声称存在理想燃尽线。
 
-只回填可恢复的已保存历史，保留 null 为缺失段，不补零。报告逐项目的 `stock_from`、`flow_from` 与 `history_state`（`pending`、`complete`、`partial`）；存量和操作次数的覆盖可以不同。只要一个纳入的项目缺少某项指标的覆盖，该工作区指标就是 null。权限和归档变化影响当前项目范围，恢复后展示可用历史，purge 移除历史。比较报告时说明这些边界。读取不会创建 Principal、Grant 或 Owner 设置。
+只回填可恢复的已保存历史，保留 null 为缺失段，不补零。报告逐项目的 `stock_from`、`flow_from` 与 `history_state`（`pending`、`complete`、`partial`）；存量和操作次数的覆盖可以不同。只要一个纳入的项目缺少某项指标的覆盖，该工作区指标就是 null。读取中和返回前会复核当前工作区管理权与 Session 范围，撤销管理权会停止工作区聚合；项目归档变化影响当前项目范围，恢复后展示可用历史，purge 移除历史。比较报告时说明这些边界。读取不会创建 Principal、Grant 或 Owner 设置。
 
 ## 项目里程碑
 

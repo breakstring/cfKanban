@@ -132,7 +132,7 @@ const route = computed<AppRoute>(() => {
     const workspaceId = decoded(project[1] ?? "");
     const projectId = project[2] === undefined ? undefined : decoded(project[2]);
     const section = project[3] as "labels" | "activity" | "deleted" | "milestones" | "trends" | undefined;
-    if (workspaceId !== null && projectId !== null) return projectId === undefined ? { kind: "trends", workspaceId } : { kind: section ?? "project", projectId, workspaceId };
+    if (workspaceId !== null && projectId !== null) return projectId === undefined ? { kind: "manage", workspaceId } : { kind: section ?? "project", projectId, workspaceId };
   }
   const issue = /^\/app\/issues\/(CFK-[1-9][0-9]*)$/.exec(path);
   if (issue !== null) return { identifier: issue[1] ?? "", kind: "issue" };

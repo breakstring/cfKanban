@@ -38,6 +38,7 @@ import {
 interface WorkspaceRow {
   created_at: number;
   deleted_at: number | null;
+  description: string | null;
   display_name: string;
   id: string;
   updated_at: number;
@@ -98,12 +99,20 @@ function workspaceResource(row: WorkspaceRow, auth: AuthContext): { [key: string
       : owner ? ["restore"] : [],
     created_at: timestamp(row.created_at),
     deleted_at: timestamp(row.deleted_at),
+    description: row.description,
     display_name: row.display_name,
     id: row.id,
     restorable: row.deleted_at !== null && owner,
     updated_at: timestamp(row.updated_at),
     version: row.version,
   };
+}
+
+function workspaceWriteResponse(body: { [key: string]: JsonValue }): { [key: string]: JsonValue } {
+  const resource = body.resource;
+  if (resource === null || typeof resource !== "object" || Array.isArray(resource)) return body;
+  // schema31 以前的幂等快照没有描述字段，对应当时的 null 默认值。
+  return { ...body, resource: { description: null, ...resource } };
 }
 
 function projectResource(row: ProjectRow, auth: AuthContext): { [key: string]: JsonValue } {
@@ -183,7 +192,7 @@ async function readResourceSnapshot(
 
 function updatedWorkspaceRow(
   row: WorkspaceRow,
-  changes: Partial<Pick<WorkspaceRow, "deleted_at" | "display_name">>,
+  changes: Partial<Pick<WorkspaceRow, "deleted_at" | "description" | "display_name">>,
   now: number,
 ): WorkspaceRow {
   return {
@@ -219,7 +228,7 @@ async function readWorkspace(
       ? buildCurrentAuthGuard(auth, now, 2, true)
       : null;
     return await db.prepare(
-      `SELECT id, display_name, version, deleted_at, created_at, updated_at
+      `SELECT id, display_name, description, version, deleted_at, created_at, updated_at
        FROM workspaces
        WHERE id = ?1 AND purged_at IS NULL ${includeDeleted ? "" : "AND deleted_at IS NULL"}
          ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
@@ -306,7 +315,7 @@ async function readWorkspacePage(
     const first = position?.[0] ?? null;
     const stableId = position?.[1] ?? null;
     const result = await db.prepare(
-      `SELECT id, display_name, version, deleted_at, created_at, updated_at
+      `SELECT id, display_name, description, version, deleted_at, created_at, updated_at
        FROM workspaces ${deleted === "only" ? "INDEXED BY idx_workspaces_tombstones" : ""}
        WHERE purged_at IS NULL AND deleted_at IS ${deleted === "only" ? "NOT NULL" : "NULL"}
          AND (?1 IS NULL OR id IN (
@@ -720,15 +729,18 @@ export async function createWorkspace(
   request: Request,
   auth: AuthContext,
   displayNameValue: JsonValue,
+  descriptionValue: JsonValue | undefined,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
   const displayName = requireDisplayName(displayNameValue);
+  const description = requireContext(descriptionValue, "description") ?? null;
   const idempotencyKey = requireIdempotencyKey(request);
   const workspaceId = crypto.randomUUID();
   const createdRow: WorkspaceRow = {
     created_at: now,
     deleted_at: null,
+    description,
     display_name: displayName,
     id: workspaceId,
     updated_at: now,
@@ -741,18 +753,18 @@ export async function createWorkspace(
     },
     db,
     execute: async (operationId) => {
-      const guard = buildCurrentAuthGuard(auth, now, 6, true);
+      const guard = buildCurrentAuthGuard(auth, now, 7, true);
       try {
         await executeAtomicBatch(db, {
           businessStatements: [
             db.prepare(
               `INSERT INTO workspaces
-                (id, display_name, version, created_at, updated_at,
+                (id, display_name, description, version, created_at, updated_at,
                  created_by_principal_id, updated_by_principal_id,
                  created_operation_id, last_operation_id)
-               SELECT ?1, ?2, 1, ?3, ?3, ?4, ?4, ?5, ?5
+               SELECT ?1, ?2, ?6, 1, ?3, ?3, ?4, ?4, ?5, ?5
                WHERE ${guard.sql}`,
-            ).bind(workspaceId, displayName, now, auth.principalId, operationId, ...guard.values),
+            ).bind(workspaceId, displayName, now, auth.principalId, operationId, description, ...guard.values),
             operationSnapshotStatement(db, operationId, workspaceResource(createdRow, auth)),
             workspaceEvent(db, auth, crypto.randomUUID(), operationId, "workspace.created", workspaceId, { workspace_id: workspaceId }, now),
           ],
@@ -787,41 +799,55 @@ export async function createWorkspace(
         status: 200,
       };
     },
-    requestBody: { display_name: displayName },
+    requestBody: { display_name: displayName, ...(descriptionValue === undefined ? {} : { description }) },
     routeTemplate: "/api/v1/workspaces",
     scopeKey: `principal:${auth.principalId}`,
   });
-  return { ...(result.body as { [key: string]: JsonValue }), idempotent_replay: result.idempotentReplay };
+  return { ...workspaceWriteResponse(result.body as { [key: string]: JsonValue }), idempotent_replay: result.idempotentReplay };
 }
 
 export async function updateWorkspace(
   db: D1Database,
   auth: AuthContext,
   workspaceIdValue: JsonValue,
-  displayNameValue: JsonValue,
+  displayNameValue: JsonValue | undefined,
+  descriptionValue: JsonValue | undefined,
   expectedVersion: number,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
   const workspaceId = requireUuid(workspaceIdValue, "workspace_id");
   const scope = { workspaceId };
   await requireManagementAuthorization(db, auth, scope, "manage_workspace", now);
-  const displayName = requireDisplayName(displayNameValue);
+  if (displayNameValue === undefined && descriptionValue === undefined) throw validationError("update_field_required");
+  const displayName = displayNameValue === undefined ? null : requireDisplayName(displayNameValue);
+  const description = requireContext(descriptionValue, "description");
   const current = await readWorkspace(db, workspaceId);
   if (current === null) throw notFound();
-  const updated = updatedWorkspaceRow(current, { display_name: displayName }, now);
+  const updated = updatedWorkspaceRow(current, {
+    ...(descriptionValue === undefined ? {} : { description: description ?? null }),
+    ...(displayNameValue === undefined ? {} : { display_name: displayName ?? current.display_name }),
+  }, now);
   const operationId = crypto.randomUUID();
-  const guard = buildManagementGuard(auth, now, 7, scope, "manage_workspace");
+  const guard = buildManagementGuard(auth, now, 10, scope, "manage_workspace");
   let commit: OperationCommit;
   try {
     ({ commit } = await executeAtomicBatch(db, {
       businessStatements: [
         db.prepare(
-          `UPDATE workspaces SET display_name = ?1, version = version + 1,
-                  updated_at = ?2, updated_by_principal_id = ?3, last_operation_id = ?4
-           WHERE id = ?5 AND version = ?6 AND deleted_at IS NULL
+          `UPDATE workspaces
+           SET display_name = CASE WHEN ?1 = 1 THEN ?2 ELSE display_name END,
+               description = CASE WHEN ?3 = 1 THEN ?4 ELSE description END,
+               version = version + 1, updated_at = ?5,
+               updated_by_principal_id = ?6, last_operation_id = ?7
+           WHERE id = ?8 AND version = ?9 AND deleted_at IS NULL
              AND ${guard.sql}`,
-        ).bind(displayName, now, auth.principalId, operationId, current.id, expectedVersion, ...guard.values),
-        workspaceEvent(db, auth, crypto.randomUUID(), operationId, "workspace.updated", current.id, { display_name: displayName }, now),
+        ).bind(displayNameValue === undefined ? 0 : 1, displayName,
+          descriptionValue === undefined ? 0 : 1, description ?? null,
+          now, auth.principalId, operationId, current.id, expectedVersion, ...guard.values),
+        workspaceEvent(db, auth, crypto.randomUUID(), operationId, "workspace.updated", current.id, {
+          description_changed: descriptionValue !== undefined,
+          ...(displayNameValue === undefined ? {} : { display_name: displayName }),
+        }, now),
       ],
       committedAt: now,
       confirmBusinessRejection: async () => {
@@ -1079,7 +1105,7 @@ export async function restoreWorkspace(
     routeTemplate: "/api/v1/workspaces/{workspace_id}/commands/restore",
     scopeKey: `principal:${auth.principalId}`,
   });
-  return { ...(result.body as { [key: string]: JsonValue }), idempotent_replay: result.idempotentReplay };
+  return { ...workspaceWriteResponse(result.body as { [key: string]: JsonValue }), idempotent_replay: result.idempotentReplay };
 }
 
 export async function createProject(
