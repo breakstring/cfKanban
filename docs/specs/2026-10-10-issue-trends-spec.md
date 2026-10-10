@@ -46,7 +46,7 @@ schema 30 起首次回填由独立的本地 Node 维护流程执行，小时 Cro
 
 默认单次计划预算为：每批最多 8 个 Issue 页、最多 1000 页、最多 30 分钟、最多 3000 次 provider 请求，请求间隔至少 500ms，D1 读取 250000 行、写入 50000 行。预算只能减少工作量或放慢请求；开始下一页前保守预留读取 4000 行、写入 1000 行及控制请求。计划前核对当前账户用量和剩余额度，预算不代替账户其他流量的计费核验。到达预算、429、实际用量元数据缺失、队列无进展或目标漂移时停止，保留原计划和进度，不自动循环追赶。
 
-同机私有 lock、跨机 D1 120 秒 lease 与递增 fence 共同限制并发。每页用稳定 batch ID 和原 Issue version/cursor 做 CAS；一条 SQL 的触发器在同一原子单元内写入日投影、推进队列并更新完成覆盖。过期 lease、旧 fence、重复提交及 CAS 争用不得重复计数，不依赖远程多条 SQL 请求的事务假设。每批记录 D1 返回的实际 `meta.rows_read`、`meta.rows_written`、SQL 耗时、provider 请求数和前后待处理数量，并单独记录本地 Node CPU；它不是 Worker CPU。journal 不保存 Event 正文、Credential 或 SQL 参数。响应不确定时先按原 batch ID 读回是否提交；用量仍未知就停止，不换键或盲目重放。
+同机私有 lock、跨机 D1 120 秒 lease 与递增 fence 共同限制并发。每页用稳定 batch ID 和原 Issue version/cursor 做 CAS；一条 SQL 的触发器在同一原子单元内写入日投影、推进队列并更新完成覆盖。过期 lease、旧 fence、重复提交及 CAS 争用不得重复计数，不依赖远程多条 SQL 请求的事务假设。每批记录 D1 返回的实际 `meta.rows_read`、`meta.rows_written`、SQL 耗时、provider 请求数和前后待处理数量，并单独记录本地 Node CPU；它不是 Worker CPU。journal 不保存 Event 正文、Credential 或 SQL 参数。响应不确定时先按原 batch ID 读回是否提交；用量仍未知就停止，不换键或盲目重放。长任务每次控制请求前通过既有安全 Wrangler 入口读取固定 profile 的当前凭据，不启动登录或扩大权限。失败记录只保留错误码、HTTP status 与平台数值 codes。公共 CLI 的 `operation recover` 对原回填只做读取：核验原 receipt/plan/journal、同一 fence、已失效租约、控制记录及原 job version/cursor，确认提交或未提交后解除本机 pending 阻塞，不重放任何历史写入。缺失用量继续明确标注，并按固定查询的保守读写上限预留；核对账号用量后另建有限计划继续，不篡改原失败 receipt。
 
 平台限制在 2026-10-10 核对：[D1](https://developers.cloudflare.com/d1/platform/limits/) Free 为 50 queries/invocation，[Workers](https://developers.cloudflare.com/workers/platform/limits/#cpu-time) Free Cron CPU 为 10ms。首次回填计算不占用 Worker Cron CPU；实际 D1 用量和账户 Analytics 仍需分别读回，不能把 Node CPU 或共享请求预算当作生产 Worker CPU / 账单证明。
 

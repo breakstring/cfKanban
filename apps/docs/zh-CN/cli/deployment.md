@@ -54,3 +54,5 @@ cfkanban deploy waf-target plan --help
 cfkanban deploy waf-target apply --help
 cfkanban deploy waf-target resume --help
 ```
+
+回填因结果不确定而停止时，保留原 operation ID，运行 `cfkanban operation recover --instance-id <instance-uuid> --operation-id <operation-uuid> --json --no-interactive`。恢复只读核对原批次，不重放回填写入。缺失用量仍标为未知并保守预留额度；核对账号用量后，再为剩余队列创建新的有限计划。恢复期间的部署须仍与原 receipt 一致。

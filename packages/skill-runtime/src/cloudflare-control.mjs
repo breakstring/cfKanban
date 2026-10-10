@@ -41,16 +41,25 @@ export async function createCloudflareControlClient(input, resourcePath = "/r2/b
   if (!["account", "zone"].includes(scope)) throw toolError("INVALID_CONTROL_SCOPE", "Choose an exact account or zone scope");
   const account = requireString(scope === "zone" ? input.zoneId : input.accountId, scope === "zone" ? "zone_id" : "account_id", { max: 128 });
   if (!/^[A-Za-z0-9_-]+$/u.test(account)) throw toolError("INVALID_ACCOUNT_ID", "Account ID is invalid");
-  const headers = await authHeaders(input, errorPrefix);
+  const refreshAuth = input.refreshAuth === true;
+  const authentication = refreshAuth ? {
+    wranglerExecutable: input.wranglerExecutable,
+    cloudflareProfile: input.cloudflareProfile,
+    contextDirectory: input.contextDirectory,
+    environment: { ...(input.environment ?? process.env), WRANGLER_SEND_METRICS: "false" },
+    tokenRunner: input.tokenRunner,
+  } : input;
+  const headers = await authHeaders(authentication, errorPrefix);
   const base = `/client/v4/${scope === "zone" ? "zones" : "accounts"}/${account}${resourcePath}`;
   const fetchImpl = input.fetchImpl ?? globalThis.fetch;
   return async (suffix, { method = "GET", body, raw = false, allowMissing = false, missingCodes = [10006], query } = {}) => {
     assertControlPath(suffix, true);
     if (query && (method !== "GET" || Object.entries(query).some(([key, value]) => !/^[a-z_]+$/u.test(key) || typeof value !== "string" || value.length > 253))) throw toolError("INVALID_CONTROL_QUERY", "Control queries must be bounded read-only filters");
     const search = query ? `?${new URLSearchParams(query)}` : "";
+    const requestHeaders = refreshAuth ? await authHeaders(authentication, errorPrefix) : headers;
     let response;
     try {
-      response = await fetchImpl(`${API_ORIGIN}${base}${suffix}${search}`, { method, redirect: "error", signal: AbortSignal.timeout(30_000), headers: { ...headers, "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      response = await fetchImpl(`${API_ORIGIN}${base}${suffix}${search}`, { method, redirect: "error", signal: AbortSignal.timeout(30_000), headers: { ...requestHeaders, "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     } catch {
       throw toolError(`${errorPrefix}_CONTROL_UNAVAILABLE`, `Cloudflare ${resourceLabel} response is uncertain; read back before retrying`, { method });
     }

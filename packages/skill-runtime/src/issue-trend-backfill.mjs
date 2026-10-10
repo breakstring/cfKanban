@@ -112,7 +112,7 @@ async function localEvidence(input) {
 
 async function remoteEvidence(input, local, meter, record = async () => {}) {
   const t = local.target;
-  const connection = { accountId: t.account_id, cloudflareProfile: t.cloudflare_profile, contextDirectory: t.context_directory, wranglerExecutable: requireString(input.wranglerExecutable, 'wrangler_executable', { max: 4096 }), fetchImpl: meter.fetch, ...(input.tokenRunner ? { tokenRunner: input.tokenRunner } : {}) };
+  const connection = { accountId: t.account_id, cloudflareProfile: t.cloudflare_profile, contextDirectory: t.context_directory, wranglerExecutable: requireString(input.wranglerExecutable, 'wrangler_executable', { max: 4096 }), fetchImpl: meter.fetch, refreshAuth: true, ...(input.tokenRunner ? { tokenRunner: input.tokenRunner } : {}) };
   if (!path.isAbsolute(connection.wranglerExecutable)) throw toolError('ABSOLUTE_PATH_REQUIRED', 'Wrangler must be an absolute executable path');
   const options = { errorPrefix: 'TREND_BACKFILL', resourceLabel: 'maintenance', scope: 'account' };
   const control = await createCloudflareControlClient(connection, `/d1/database/${t.database_id}`, options);
@@ -120,12 +120,17 @@ async function remoteEvidence(input, local, meter, record = async () => {}) {
   const query = async (sql, params = [], label = 'inspection') => {
     const queryId = randomUUID();
     await record({ type: 'trend_backfill_query_started', query_id: queryId, label });
-    let results;
+    let results; const requestsBefore = meter.usage.provider_requests;
     try {
       results = await control('/query', { method: 'POST', body: { sql, params } });
       if (!Array.isArray(results) || results.length !== 1 || results[0]?.success !== true || !Array.isArray(results[0].results)) throw stop('query_response_unknown');
     } catch (error) {
-      meter.usage.metadata_complete = false;
+      const sent = meter.usage.provider_requests > requestsBefore;
+      if (sent) meter.usage.metadata_complete = false;
+      await record({ type: 'trend_backfill_query_failed', query_id: queryId, label, provider_request_sent: sent,
+        code: /^[A-Z][A-Z0-9_]{0,80}$/.test(error.code ?? '') ? error.code : 'CONTROL_REQUEST_FAILED',
+        ...(Number.isSafeInteger(error.details?.status) ? { status: error.details.status } : {}),
+        ...(Array.isArray(error.details?.codes) ? { codes: error.details.codes.filter(Number.isSafeInteger) } : {}) });
       throw error;
     }
     await meter.record(results[0], label, queryId); return results[0];
@@ -178,6 +183,81 @@ export async function createTrendBackfillPlan(input) {
   return { plan, plan_digest: canonicalDigest(plan), inspection: { pending: remote.summary, lease: remote.lease, usage: meter.usage } };
 }
 
+export function reconcileTrendBackfillEvidence(events, inspection, job, databaseNowMs) {
+  const acquired = events.findLast(event => event.type === 'trend_backfill_lease_acquired');
+  const checkpoint = events.findLast(event => event.type === 'trend_backfill_batch_started');
+  const finished = events.filter(event => event.type === 'trend_backfill_batch_finished');
+  const control = inspection.lease;
+  if (!acquired || control.fence !== acquired.fence || control.run_id !== null && control.run_id !== acquired.run_id
+    || !Number.isSafeInteger(databaseNowMs) || control.run_id !== null && control.lease_until >= databaseNowMs) throw stop('original_lease_unconfirmed');
+  const uncertain = checkpoint && !finished.some(event => event.batch_id === checkpoint.batch_id);
+  let batchOutcome = 'no_uncertain_batch';
+  if (uncertain) {
+    if (control.last_batch_id === checkpoint.batch_id && control.last_issue_id === checkpoint.issue_id
+      && control.last_version === checkpoint.original_version + 1) batchOutcome = 'committed';
+    else {
+      const previous = finished.at(-1);
+      const baseline = acquired.previous_checkpoint;
+      const previousMatches = previous ? control.last_batch_id === previous.batch_id && control.last_issue_id === previous.issue_id
+        && control.last_version === previous.original_version + 1 : baseline ? control.last_batch_id === baseline.batch_id
+          && control.last_issue_id === baseline.issue_id && control.last_version === baseline.version : control.last_batch_id === null;
+      if (!previousMatches || job?.version !== checkpoint.original_version || job?.cursor !== checkpoint.original_cursor) throw stop('original_batch_unconfirmed');
+      batchOutcome = 'not_committed';
+    }
+  } else {
+    const previous = finished.at(-1);
+    const baseline = acquired.previous_checkpoint;
+    const matches = previous ? control.last_batch_id === previous.batch_id && control.last_issue_id === previous.issue_id
+      && control.last_version === previous.original_version + 1 : baseline ? control.last_batch_id === baseline.batch_id
+        && control.last_issue_id === baseline.issue_id && control.last_version === baseline.version : control.last_batch_id === null;
+    if (!matches) throw stop('original_checkpoint_unconfirmed');
+  }
+  const usages = new Set(events.filter(event => event.type === 'trend_backfill_query_usage' && event.metadata_complete !== false
+    && ['rows_read', 'rows_written'].every(key => Number.isSafeInteger(event[key]) && event[key] >= 0)
+    && Number.isFinite(event.sql_duration_ms) && event.sql_duration_ms >= 0).map(event => event.query_id));
+  const notSent = new Set(events.filter(event => event.type === 'trend_backfill_query_failed' && event.provider_request_sent === false).map(event => event.query_id));
+  const unknown = events.filter(event => event.type === 'trend_backfill_query_started' && !usages.has(event.query_id) && !notSent.has(event.query_id));
+  const allowed = new Set(['inspection', 'pending_before', 'lease_acquire', 'lease_renew', 'lease_release', 'job_page', 'history_page', 'history_commit', 'history_commit_readback', 'uncertain_commit_readback', 'pending_after', 'queue_after']);
+  if (unknown.some(event => !allowed.has(event.label))) throw stop('original_query_unrecognized');
+  const unknownWrites = unknown.filter(event => ['lease_acquire', 'lease_renew', 'lease_release', 'history_commit'].includes(event.label));
+  return { batch_id: uncertain ? checkpoint.batch_id : null, batch_outcome: batchOutcome, original_usage_complete: unknown.length === 0,
+    unknown_queries: unknown.length, conservative_unknown_usage: { rows_read: unknown.length * 4000, rows_written: unknownWrites.length * 1000 },
+    pending_jobs: inspection.pending.pending_jobs, original_fence: acquired.fence, original_lease_active: false, replayed_writes: 0 };
+}
+
+export async function recoverTrendBackfill(input) {
+  const plan = input.plan;
+  if (plan?.kind !== 'issue_trend_history_backfill' || plan.schema_version !== 1 || input.instanceId !== plan.instance_id
+    || input.operationId !== plan.operation_id || input.taskId !== plan.task_id || input.authorization?.plan_digest !== canonicalDigest(plan)
+    || input.authorization?.operation_id !== plan.operation_id || input.authorization?.instance_id !== plan.instance_id
+    || input.authorization?.task_id !== plan.task_id) throw toolError('INVALID_TREND_BACKFILL_PLAN', 'Recover only the retained original authorized backfill plan');
+  const local = await localEvidence(input);
+  if (canonicalDigest(local.target) !== canonicalDigest(plan.target) || local.receiptPath !== plan.receipt.path || local.receipt_digest !== plan.receipt.digest
+    || local.bundleRoot !== plan.source.bundle_root || local.bundle.bundle_tree_digest !== plan.source.bundle_tree_digest
+    || local.bundle.artifact_sha256 !== plan.source.artifact_sha256) throw toolError('TREND_BACKFILL_PLAN_DRIFT', 'Recover using the original receipt, source and target');
+  const lockPath = path.join(local.paths.journalsRoot, `${input.operationId}.json.trends.lock`);
+  await assertNoSymlinkPath(lockPath, local.stateRoot);
+  let lock; try { lock = await open(lockPath, 'wx', 0o600); } catch { throw toolError('TREND_BACKFILL_LOCAL_LOCKED', 'The original local runner may still be active; never recover it concurrently'); }
+  try {
+    const journal = await assertJournalAuthorization({ ...input, stateRoot: local.stateRoot });
+    const meter = createTrendBackfillMeter({ budget: normalizeTrendBackfillBudget(), fetchImpl: input.fetchImpl });
+    const remote = await remoteEvidence(input, local, meter);
+    const checkpoint = journal.events.findLast(event => event.type === 'trend_backfill_batch_started');
+    const job = checkpoint ? (await remote.query('SELECT version,cursor FROM issue_trend_backfill WHERE issue_id=? LIMIT 1', [checkpoint.issue_id], 'recover_original_job')).results[0] : null;
+    const databaseNowMs = (await remote.query("SELECT CAST(strftime('%s','now') AS INTEGER)*1000 AS now_ms", [], 'recover_database_time')).results[0]?.now_ms;
+    const controlAfter = (await remote.query(CONTROL_SQL, [], 'recover_control_readback')).results[0];
+    if (canonicalDigest(controlAfter) !== canonicalDigest(remote.lease)) throw stop('original_control_changed');
+    const evidence = reconcileTrendBackfillEvidence(journal.events, { lease: remote.lease, pending: remote.summary }, job, databaseNowMs);
+    const result = { ok: true, recovered: true, complete: false, operation_id: input.operationId, ...evidence, recovery_usage: meter.usage,
+      continuation: 'create_new_bounded_plan_after_account_usage_readback', secret_values_exposed: false };
+    await appendJournalEvent({ ...input, stateRoot: local.stateRoot, event: { type: 'trend_backfill_recovered_read_only', ...result } });
+    const receiptPath = path.join(local.paths.receiptsRoot, `${input.operationId}.trends-recovery.json`);
+    await atomicWriteJson(receiptPath, { kind: 'cfkanban_trend_backfill_recovery_receipt', schema_version: 1, instance_id: input.instanceId,
+      operation_id: input.operationId, plan_digest: canonicalDigest(plan), result, checked_at: new Date().toISOString() });
+    return { ...result, receipt_path: receiptPath };
+  } finally { await lock.close(); await rm(lockPath); }
+}
+
 export async function runBoundedTrendBackfill({ plan, algorithm, query, meter, record, assertWorker, now = Date.now, priorEvents = [] }) {
   const cpuStart = process.cpuUsage(); const started = now(); const runId = plan.operation_id;
   const priorBatches = priorEvents.filter(event => event.type === 'trend_backfill_batch_finished');
@@ -193,10 +273,11 @@ export async function runBoundedTrendBackfill({ plan, algorithm, query, meter, r
   try {
     pendingBefore = (await query(STATUS_SQL, [], 'pending_before')).results[0]?.pending_jobs;
     if (pendingBefore === 0) return { stop_reason: 'complete', pending_before: 0, pending_after: 0, pages: 0, finished_issues: 0, usage: meter.usage, worker_cpu_ms: null };
-    const acquired = await query('UPDATE issue_trend_backfill_control SET run_id=?,lease_until=?,fence=fence+1 WHERE id=1 AND lease_until<=? RETURNING fence', [runId, now() + LEASE_MS, now()], 'lease_acquire');
+    const acquired = await query('UPDATE issue_trend_backfill_control SET run_id=?,lease_until=?,fence=fence+1 WHERE id=1 AND lease_until<=? RETURNING fence,last_batch_id,last_issue_id,last_version', [runId, now() + LEASE_MS, now()], 'lease_acquire');
     if (acquired.results.length !== 1 || !Number.isSafeInteger(acquired.results[0].fence)) throw stop('lease_busy');
     fence = acquired.results[0].fence;
-    await record({ type: 'trend_backfill_lease_acquired', run_id: runId, fence });
+    await record({ type: 'trend_backfill_lease_acquired', run_id: runId, fence,
+      previous_checkpoint: { batch_id: acquired.results[0].last_batch_id ?? null, issue_id: acquired.results[0].last_issue_id ?? null, version: acquired.results[0].last_version ?? null } });
     let lastProgress = null;
     while (pages < plan.budget.maxPages) {
       if (!meter.available(4000, 1000, 9) || now() - started >= plan.budget.maxDurationMs) { reason = 'budget_exhausted'; break; }
@@ -297,7 +378,8 @@ export async function runTrendBackfill(input) {
     const previousElapsedMs = Math.max(0, ...journal.events.filter(event => Number.isFinite(event.cumulative_elapsed_ms)).map(event => event.cumulative_elapsed_ms));
     const meter = createTrendBackfillMeter({ budget: plan.budget, fetchImpl: input.fetchImpl, previousUsage, previousElapsedMs, onRequest: event => record({ type: 'trend_backfill_provider_request', ...event }), onQuery: event => record({ type: 'trend_backfill_query_usage', ...event }) });
     if (!previousUsage.metadata_complete) throw stop('original_run_usage_unknown');
-    if (journal.events.some(event => event.type === 'trend_backfill_query_started' && !queries.some(result => result.query_id === event.query_id))) throw stop('original_query_usage_unknown');
+    if (journal.events.some(event => event.type === 'trend_backfill_query_started' && !queries.some(result => result.query_id === event.query_id)
+      && !journal.events.some(result => result.type === 'trend_backfill_query_failed' && result.query_id === event.query_id && result.provider_request_sent === false))) throw stop('original_query_usage_unknown');
     const remote = await remoteEvidence(input, local, meter, record);
     const result = summarizeTrendBackfill(await runBoundedTrendBackfill({ plan, algorithm: local.algorithm,
       query: remote.query, assertWorker: remote.assertWorker, meter, record, priorEvents: journal.events }),

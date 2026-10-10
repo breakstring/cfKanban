@@ -5623,6 +5623,26 @@
           }
         ]
       }
+    },
+    {
+      "command": "maintenance trends recover",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane_and_private_journal",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "operation recover"
+        ],
+        "note": "公共CLI对原回填只读核对日志、同一fence、已失效租约和提交进度，保留缺失用量，不重放历史写入。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/runtime.mjs",
+            "contains": "helper('maintenance trends recover'"
+          }
+        ]
+      }
     }
   ],
   "skill_workflows": [

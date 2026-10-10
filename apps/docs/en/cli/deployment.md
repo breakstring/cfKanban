@@ -54,3 +54,5 @@ cfkanban deploy waf-target plan --help
 cfkanban deploy waf-target apply --help
 cfkanban deploy waf-target resume --help
 ```
+
+If a run stops with an unknown result, retain its original operation ID and use `cfkanban operation recover --instance-id <instance-uuid> --operation-id <operation-uuid> --json --no-interactive`. Recovery checks the original batch through read-only queries; it does not replay backfill writes. Missing usage remains explicitly unknown with a conservative allowance reserved. Check account usage before starting a new bounded plan for the remaining queue. The deployed release must still match the original receipt during recovery.

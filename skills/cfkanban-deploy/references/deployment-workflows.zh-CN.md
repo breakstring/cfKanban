@@ -324,6 +324,8 @@ schema 30 的首次历史处理独立于小时 Cron。用户要求补齐待处�
 6. 核对安全摘要、receipt 与私有 journal。每批记录 D1 的 `meta.rows_read`、`meta.rows_written`、SQL 耗时、provider 请求数、队列进度和本地 Node CPU。Node CPU 不代表 Worker CPU，不能据此推断 Worker invocation CPU。journal 不保存 Event 正文、秘密或 SQL 参数。写响应不确定时保留原 operation/plan/batch ID，先读回提交标记；即使已证明提交，用量未知也停止，不能换键或盲目重放该页。
 7. 有界运行结束仍有待处理任务时，先核对实际用量、停止原因及剩余额度，再在用户授权内规划后续工作。完成需要队列/计数和趋势覆盖读回。待处理清零不代表不可靠的旧事件可恢复，`partial`、不同的存量/操作覆盖起点和图表 null 断点仍可能保留。
 
+长控制任务在每次请求前通过既有安全 Wrangler 入口读取冻结 profile 的当前凭据，不启动登录或扩大权限。公共 CLI 回填结果不确定时，以原 operation ID 执行 `operation recover`。它只读取原日志/receipt、同一 fence、已失效租约、提交控制记录及 job version/cursor，不再次调用 run。缺失用量明确保留并按保守上限预留；完成恢复和账号用量读回后，为剩余队列生成新的有限计划。保留原失败 receipt，恢复证据另存。
+
 ## 可选 Cloudflare 用量配置
 
 用量快照默认启用、按需刷新，不另设统计 Cron。默认部署不需要统计 Token、不新增资源；配置不完整时 API 返回 `not_configured`，附件应用预算仍可读取。schema 30 保留小时维护触发器（`17 * * * *`）处理附件清理与按日防重的可选用量历史采集，不处理首次趋势队列。附件清理最多 8 个对象、用量历史最多预留 9 次调用，共享 50 次子请求预算并保留 4 次余量；5 秒后不再启动维护工作，等待已发出的操作完成。该 schedule 显式进入部署计划，在部署前检查原 schedule、部署后核验实际 schedule；首次部署先完成 `worker_deployment_readback` 再 bootstrap，缺少证据不能 finalize。schema 29 保留历史每小时 3–8 个趋势页，schema 28 及更早保留原有仅附件清理的触发器约定。

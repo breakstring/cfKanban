@@ -286,6 +286,13 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     const identity=record.identity?await connection(input.instanceId):null;
     if(record.identity&&canonicalDigest(identity)!==canonicalDigest(record.identity)) throw toolError('CLI_RECOVERY_IDENTITY_CHANGED','Restore the original connection and Credential before recovering this operation');
     if(record.phase==='verified'||record.phase==='rejected'||record.phase==='failed'||record.phase==='committed_delivery_failed') return terminalResult(record);
+    if(record.kind==='helper'&&record.command.workflow==='trend-backfill-run') {
+      const result=await helper('maintenance trends recover',record.input);
+      if(result.ok===true&&result.recovered===true&&result.replayed_writes===0) {
+        record.phase='verified';record.result=result;await atomicWriteJson(file,record);return result;
+      }
+      return {...result,outcome_unknown:true,recovery:{command:'operation recover',instance_id:input.instanceId,operation_id:record.operation_id}};
+    }
     if(record.kind==='helper') {
       if(now()-record.created_at_ms>=23*60*60*1000)throw toolError('CLI_RECOVERY_WINDOW_EXPIRED','The safe replay window expired; inspect retained and remote evidence');
       if(record.capability_digest&&canonicalDigest(input.capabilityInput)!==record.capability_digest)throw toolError('CLI_RECOVERY_CAPABILITY_REQUIRED','Reprovide the original invitation through --capability-stdin');
@@ -415,7 +422,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     }
     if(result?.operation?.ok===true&&result?.verification?.ok===false)result={...result,committed_unverified:true};
     if(record.command.workflow==='owner-rotate'&&!failed(result)&&!unknown(result)&&!rotationVerified(record,result))result={...result,ok:false,outcome_unknown:true,error:{code:'CLI_ROTATION_EVIDENCE_MISMATCH',category:'platform_failure',source:'client_runtime',recovery:'inspect_original_rotation_evidence'}};
-    if(unknown(result)||recovering&&failed(result)) {record.phase='unknown';if(record.command.workflow==='owner-rotate')record.result=result;await atomicWriteJson(file,record);return {...result,outcome_unknown:true,recovery:{command:'operation recover',instance_id:record.instance_id,operation_id:record.operation_id,idempotency_key:record.idempotency_key}};}
+    if(unknown(result)||recovering&&failed(result)) {record.phase='unknown';if(['owner-rotate','trend-backfill-run'].includes(record.command.workflow))record.result=result;await atomicWriteJson(file,record);return {...result,outcome_unknown:true,recovery:{command:'operation recover',instance_id:record.instance_id,operation_id:record.operation_id,idempotency_key:record.idempotency_key}};}
     record.phase=failed(result)?'rejected':'verified'; record.result=['invite create','web open'].includes(record.command.name)&&!failed(result)?{ok:true,data:{delivery_already_attempted:true,one_time_capability_hidden:true}}:JSON.parse(JSON.stringify(result,(_,value)=>typeof value==='function'||value instanceof Promise?undefined:value));await atomicWriteJson(file,record);
     return result;
   };

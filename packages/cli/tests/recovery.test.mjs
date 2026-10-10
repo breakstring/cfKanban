@@ -61,6 +61,22 @@ test('an unknown usage refresh performs only bounded snapshot reads during recov
   const options={...f,fetchImpl:fetchFixture(f),requestImpl};const first=await createCliRuntime(options).execute(command('admin usage show'),{instanceId:f.instanceId,mode:'manual'});assert.equal(first.outcome_unknown,true);
   const recovered=await createCliRuntime(options).execute(command('operation recover'),{instanceId:f.instanceId,operationId:first.recovery.operation_id});assert.equal(recovered.outcome_unknown,true);assert.equal(recovered.readback.ok,true);assert.equal(posts,1);
 });
+test('unknown trend backfill recovery reconciles the original journal without invoking the run again',async t=> {
+  const f=await createMcpStateFixture(t);const operationId=randomUUID();const calls=[];
+  const input={instanceId:f.instanceId,operationId,taskId:'bounded-backfill',plan:{retained:'original'},authorization:{retained:'original'},currentReceiptPath:'/private/original.json',serviceBundleRoot:'/private/service',wranglerExecutable:'/private/wrangler'};
+  const dispatchImpl=async(name,data)=> {
+    calls.push(name);assert.equal(data.operationId,operationId);assert.deepEqual(data.plan,input.plan);
+    if(name==='maintenance trends run')return {ok:false,outcome_unknown:true,usage:{metadata_complete:false}};
+    assert.equal(name,'maintenance trends recover');return {ok:true,recovered:true,complete:false,replayed_writes:0,original_usage_complete:false,conservative_unknown_usage:{rows_read:16000,rows_written:2000}};
+  };
+  const runtime=createCliRuntime({...f,fetchImpl:fetchFixture(f),dispatchImpl});
+  const first=await runtime.execute(command('deploy trends run'),input);assert.equal(first.outcome_unknown,true);
+  const result=await runtime.execute(command('operation recover'),{instanceId:f.instanceId,operationId});
+  assert.equal(result.recovered,true);assert.equal(result.complete,false);assert.equal(result.original_usage_complete,false);
+  assert.deepEqual(calls,['maintenance trends run','maintenance trends recover']);
+  await assert.rejects(readFile(path.join(f.stateRoot,'instances',f.instanceId,'cli-operations/pending.json')));
+  const again=await runtime.execute(command('operation recover'),{instanceId:f.instanceId,operationId});assert.equal(again.recovered,true);assert.equal(calls.length,2);
+});
 
 async function ledgerFixture(t) {
   const f=await createMcpStateFixture(t);const operationId=randomUUID(),databaseId=randomUUID();const bundle=path.join(f.home,'service/versions/1.0.0/bundle');
