@@ -64,6 +64,8 @@ const helpers = [
   ['deploy worker version','runtime worker-version-readback',['wranglerExecutable','accountId','cloudflareProfile','contextDirectory','workerName','versionId']],
   ['deploy storage inspect','runtime r2-storage-readback',['wranglerExecutable','accountId','cloudflareProfile','contextDirectory','bucketName','instanceId']],
   ['deploy skill plan', 'plan skill-update', ['taskId','current','target','installRoot']], ['deploy skill install', 'release install-skill-bundle', ['bundlePath','version','expectedSha256','publisher','source']], ['deploy service cache', 'release install-service-bundle', ['bundlePath','version','expectedSha256','publisher','source']],
+  ['deploy trends inspect', 'maintenance trends inspect', ['instanceId','currentReceiptPath','serviceBundleRoot','wranglerExecutable']],
+  ['deploy trends plan', 'maintenance trends plan', ['instanceId','taskId','operationId','currentReceiptPath','serviceBundleRoot','wranglerExecutable','budget']],
   ['deploy plan', 'plan strict-zero', ['taskId','accountId','accountLabel','cloudflareProfile','cloudflareAuthContextDirectory','ownerDisplayName','release','resourcePrefix','workerName','d1Name','instanceId','ownerPrincipalId','ownerCredentialId','operationId','preferredApiOrigin']], ['deploy upgrade plan', 'plan instance-upgrade', ['taskId','instanceId','operationId','cloudflare','resources','bindings','owner','current','target','migrations','restorePoint','allow_breaking_change','allow_unverified_current_source','attachments','usageAnalytics','workerLimits']],
   ['deploy plan compare','plan compare',['before','after']],
   ['deploy attach inspect', 'deployment inspect-existing', ['instanceId','accountId','workerName','d1Name','databaseId','apiOrigin','wranglerExecutable','cloudflareProfile','contextDirectory','baselineBundle','publisher','publicAccessReceipt']], ['deploy attach plan', 'plan deployment-attachment', ['taskId','instanceId','accountId','workerName','d1Name','databaseId','apiOrigin','wranglerExecutable','cloudflareProfile','contextDirectory','baselineBundle','publisher','publicAccessReceipt']],
@@ -71,6 +73,7 @@ const helpers = [
 ];
 export const HELPER_COMMANDS = helpers.map(([name, helper, fields]) => ({ name, helper, fields, effect: /(?:show|list|inspect|resolve|discover|verify|continuity|snapshot|capabilities)$/.test(name) ? 'read' : /plan$/.test(name) ? 'plan' : 'write', description: name }));
 export const WORKFLOW_COMMANDS = [
+  {name:'deploy trends run',workflow:'trend-backfill-run',fields:['instanceId','operationId','taskId','plan','authorization','currentReceiptPath','serviceBundleRoot','wranglerExecutable'],required:['instanceId','operationId','taskId','plan','authorization','currentReceiptPath','serviceBundleRoot','wranglerExecutable'],effect:'write'},
   ...['apply','resume'].map(action=>({name:`deploy public-access ${action}`,workflow:'public-access-apply',fields:['instanceId','operationId','taskId','plan','authorization'],required:['instanceId','operationId','taskId','plan','authorization'],effect:'write'})),
   ...['apply','resume'].map(action=>({name:`deploy waf-target ${action}`,workflow:'waf-target-apply',fields:['instanceId','operationId','taskId','plan','authorization'],required:['instanceId','operationId','taskId','plan','authorization'],effect:'write'})),
   ...['show','use','clear'].map(action=>({name:`context ${action}`,workflow:`context-${action}`,fields:['instanceId','workspace_id','project_id','directory','global'],required:[],effect:action==='show'?'read':'write'})),
@@ -93,6 +96,8 @@ export const WORKFLOW_COMMANDS = [
   { name: 'operation recover', workflow: 'operation-recover', fields: ['instanceId','operationId'], effect: 'write' },
 ];
 const required = {
+ 'deploy trends inspect':['instanceId','currentReceiptPath','serviceBundleRoot','wranglerExecutable'],
+ 'deploy trends plan':['instanceId','taskId','currentReceiptPath','serviceBundleRoot','wranglerExecutable'],
  'deploy worker cost-settings':['accountId','workerName','wranglerExecutable'],
  'deploy public-access inspect':['instanceId','receiptPath','zoneId','hostname','wranglerExecutable'],
  'deploy public-access plan':['instanceId','taskId','receiptPath','zoneId','hostname','wranglerExecutable','mode'],

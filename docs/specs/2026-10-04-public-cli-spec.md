@@ -1,6 +1,6 @@
 # 公共 CLI 与三端能力同步合同
 
-> 2026-10-10 增量：[Issue 趋势](2026-10-10-issue-trends-spec.md)（Frozen）增加有界工作区 / 项目趋势、里程碑燃起图与已有历史回填，Web、Agent 和 CLI 共用统计及权限口径。
+> 2026-10-10 增量：[Issue 趋势](2026-10-10-issue-trends-spec.md)（Frozen）增加有界工作区 / 项目趋势、里程碑燃起图与已有历史回填，Web、Agent 和 CLI 共用统计及权限口径。CFK-730 的已授权修订将 schema 30 首次回填独立为 `deploy trends inspect/plan/run` 控制面维护。
 
 > 2026-10-09 增量：[项目里程碑](2026-10-09-project-milestones-spec.md)（Frozen）增加项目内交付节点、可选单一 Issue 归属与当前进度；趋势图单独规划。
 
@@ -14,7 +14,7 @@
 
 公共命令为 `cfkanban`，供人类终端与非交互 Agent 使用。与 Skills 同一个不可变完整 bundle 交付预构建 `cli/cfkanban.mjs`、命令目录和 build metadata；CLI 与 MCP 并列调用共享安全 runtime，CLI 能力以三个 Skills 的完整流程为基线，不能用 MCP 的有界集合缩小范围。Node 基线 `>=22.12.0`，不首发独立 npm 渠道或免 Node binary。
 
-主要帮助与公开文档按实际工作组织：选定/切换项目、查找任务、查看/创建、推进/评论、完成、打开看板；管理、部署和诊断按需进入。公共命令表达用户工作，不为展示内部 helper、阶段或命令数量而增加学习步骤。帮助专用 `--advanced` 可查看高级与兼容命令，不作为业务命令参数或日常安装入口提示。`--json` 仅选择输出方式，CLI、Skill API 与 MCP 复用相同 Service 业务语义，不引入定时器、触发器或批量写流程。
+主要帮助与公开文档按实际工作组织：选定/切换项目、查找任务、查看/创建、推进/评论、完成、打开看板；管理、部署和诊断按需进入。公共命令表达用户工作，不为展示内部 helper、阶段或命令数量而增加学习步骤。帮助专用 `--advanced` 可查看高级与兼容命令，不作为业务命令参数或日常安装入口提示。`--json` 仅选择输出方式，CLI、Skill API 与 MCP 复用相同 Service 业务语义，不引入业务定时器、触发器或 batch/bulk 领域写入。下述部署控制面可提供固定用途、有界预算、计划授权的派生统计维护；它不提供任意 SQL 或批量修改 Issue、Event、Grant 的接口。
 
 无参数、`help`、仅命令组和逐级 `--help` 离线显示用途、上手步骤、日常/管理/部署导航、参数与真实例子，不读取凭据、不联网、不等待 stdin。`--locale en|zh-CN` 控制说明，`--json` 返回稳定机器结果。参数采用长选项；未知、重复、缺失或类型错误在请求前拒绝。命令目录由 `packages/cli/src/catalog.mjs` 维护，OpenAPI 提供 HTTP 字段和类型，公共 noun/action 名称独立维护，不将任意 API 透传或内部 helper 名称当作公共接口。
 
@@ -79,6 +79,7 @@ CLI 在请求前于已核验私有状态保存非秘密 operation：稳定本地
 | 工件/环境准备 | `deploy release/runtime/auth`、`cli` | 固定可信发行/来源/digest，环境核验与明确本地修改，鉴权使用现有安全模块 | Web 不访问 OS/Cloudflare Credential；使用 Skills/CLI 准备 |
 | 首次部署 | `deploy plan/apply/resume` | 精确账户、Worker/D1/费用、绑定授权、journal、migration/schema/Owner/版本读回 | 多步非原子；GUI/UAC/Cloudflare 登录需人在相应步骤完成 |
 | 接入/升级/恢复 | `deploy attach/upgrade/recovery` | 固定 plan 与授权，漂移拒绝，同计划无漂移续做、receipt | Worker rollback 不回退 D1，不自动 Time Travel restore；外部写入需明确授权 |
+| 首次趋势历史回填 | `deploy trends inspect/plan/run` | 已验证部署 receipt 与不可变 Service 算法，准确实例/Owner/云资源，预算、实际 D1 用量、同机 lock/跨机 lease/fence、逐页 CAS 和未知结果读回 | 部署 Skill 同安全 runtime；Web/API/MCP 只读覆盖，不读取 OS 或 Cloudflare Credential |
 
 新增或调整能力必须同步核对 Skills、WebUI、CLI 的语义与验收。只能记录有实际平台/交互/安全原因的差异和可用替代；“暂未实现”是交付缺口，不能伪装例外。完整命令矩阵必须核对三个 Skill 的 help/catalog、多步流程、Web 与 HTTP，不能仅统计命令数量证明能力完整。
 

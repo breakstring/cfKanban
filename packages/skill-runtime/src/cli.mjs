@@ -45,6 +45,7 @@ import { canonicalDigest } from "./utils.mjs";
 import { inspectPublicAccess, createPublicAccessPlan, applyPublicAccess } from "./public-access.mjs";
 import { inspectWafTarget, createLegacyWafTargetPlan, applyWafTarget } from "./waf-target.mjs";
 import { readWorkerCostSettings } from "./worker-cost-settings.mjs";
+import { createTrendBackfillPlan, inspectTrendBackfill, runTrendBackfill } from "./issue-trend-backfill.mjs";
 
 const ALL_SURFACES = Object.freeze(["daily", "admin", "deploy"]);
 
@@ -53,6 +54,9 @@ function command({ description, effect, inputFields = [], output = "ordinary", s
 }
 
 const COMMANDS = new Map([
+  ["maintenance trends inspect", command({ description: "Inspect one verified deployment's bounded Issue history queue and actual D1 query usage without changing history or schedules.", effect: "read_only_control_plane_and_authenticated_http", inputFields: ["instanceId", "currentReceiptPath", "serviceBundleRoot", "wranglerExecutable"], surfaces: ["deploy"], run: inspectTrendBackfill })],
+  ["maintenance trends plan", command({ description: "Freeze one receipt-bound immutable Service backfill algorithm, target, Owner continuity and bounded local execution budget.", effect: "read_only_control_plane_and_plan", inputFields: ["instanceId", "taskId", "operationId", "currentReceiptPath", "serviceBundleRoot", "wranglerExecutable", "budget"], surfaces: ["deploy"], run: createTrendBackfillPlan })],
+  ["maintenance trends run", command({ description: "Run only the exact authorized local history backfill with a fenced D1 lease, bounded single-statement commits, rate limiting and private actual-usage journal; stop on unknown writes.", effect: "authorized_d1_history_write_and_private_journal", inputFields: ["instanceId", "taskId", "operationId", "plan", "authorization", "currentReceiptPath", "serviceBundleRoot", "wranglerExecutable"], surfaces: ["deploy"], run: runTrendBackfill })],
   ["runtime worker-cost-settings", command({ description: "Read the selected Worker's limits and Observability without changing a subscription or settings.", effect: "read_only_control_plane", inputFields: ["accountId", "workerName", "wranglerExecutable", "cloudflareProfile", "contextDirectory"], surfaces: ["deploy"], run: readWorkerCostSettings })],
   ["public-access inspect", command({ description: "Read one receipt-bound hostname, Workers exposure and optional WAF inventory without writes.", effect: "read_only_control_plane_and_authenticated_http", inputFields: ["instanceId", "receiptPath", "zoneId", "hostname", "wranglerExecutable", "cloudflareProfile", "contextDirectory", "includeWaf"], surfaces: ["deploy"], run: inspectPublicAccess })],
   ["plan public-access", command({ description: "Plan a custom-domain enable or explicit rollback; legacy owned-rule cleanup is retained only for rollback.", effect: "read_control_plane_and_register_service_plan", inputFields: ["instanceId", "taskId", "operationId", "receiptPath", "zoneId", "hostname", "wranglerExecutable", "cloudflareProfile", "contextDirectory", "mode", "passkeyRecoveryReady", "conflictChoice"], surfaces: ["deploy"], run: createPublicAccessPlan })],

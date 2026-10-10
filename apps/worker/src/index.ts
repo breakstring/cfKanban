@@ -36,7 +36,6 @@ import { registerCloudflareControlRoutes } from "./routes/cloudflare-control.ts"
 import { registerMilestoneRoutes } from "./routes/milestones.ts";
 import { maintenanceBudget } from "./domain/maintenance-budget.ts";
 import { registerIssueTrendRoutes } from "./routes/issue-trends.ts";
-import { backfillIssueTrends } from "./services/issue-trend-projection.ts";
 import { registerScopedAdministratorRoutes } from "./routes/scoped-administrators.ts";
 import { registerSearchIndexRoutes } from "./routes/search-index.ts";
 import { collectAttachmentGarbage } from "./services/attachments.ts";
@@ -179,13 +178,6 @@ export default {
         await collectUsageHistoryDaily(env);
       } catch {
         console.warn({ operation: "usage_history_collection", error: "collection_failed" });
-      }
-    }
-    if (Date.now() < deadline) {
-      try {
-        await backfillIssueTrends(env.DB, budget.trendJobs, { deadline });
-      } catch {
-        console.warn({ operation: "issue_trend_backfill", error: "collection_failed" });
       }
     }
   },

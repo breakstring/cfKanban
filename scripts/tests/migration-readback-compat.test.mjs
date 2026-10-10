@@ -116,6 +116,7 @@ test("schema 12 real release readback proves device_name and the complete migrat
     const current = readback(sql);
     assert.ok(current.schema.columns.includes("credentials.device_name"));
     assert.ok(current.schema.columns.includes("issues.milestone_id"));
+    assert.ok(current.schema.columns.includes("issue_trend_backfill.replay_json"));
     const state = reconcileMigrationState({ manifest, ...current });
     assert.equal(state.safe_to_continue, true);
     assert.ok(state.migrations.every(entry => entry.state === "applied"));
@@ -125,5 +126,8 @@ test("schema 12 real release readback proves device_name and the complete migrat
     const missingMembership = reconcileMigrationState({ manifest, ...readback(sql.replace(", 'issues'", "")) });
     assert.equal(missingMembership.safe_to_continue, false);
     assert.equal(missingMembership.migrations.find(entry => entry.sequence === 28).reason, "ledger_present_schema_incomplete");
+    const missingReplay = reconcileMigrationState({ manifest, ...readback(sql.replace(", 'issue_trend_backfill'", "")) });
+    assert.equal(missingReplay.safe_to_continue, false);
+    assert.equal(missingReplay.migrations.find(entry => entry.sequence === 30).reason, "ledger_present_schema_incomplete");
   } finally { database.close(); }
 });

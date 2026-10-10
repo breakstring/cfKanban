@@ -1,6 +1,6 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
-> 2026-10-10 增量：[Issue 趋势](2026-10-10-issue-trends-spec.md)（Frozen）规定 schema 29 起核心部署的有界小时维护任务、部署计划与 schedule 读回；不依赖可选附件或统计凭据。
+> 2026-10-10 增量：[Issue 趋势](2026-10-10-issue-trends-spec.md)（Frozen）规定部署计划与小时 schedule 读回。CFK-730 的已授权修订将 schema 30 首次回填改为部署 Skill/CLI 独立、有界的本地 Node 维护流程；小时任务只保留日常附件/可选用量历史维护，不依赖可选附件或统计凭据来推进首次回填。
 
 > 2026-10-01 增量：[Web 会话活动续期](2026-10-01-web-session-renewal-spec.md)（Frozen）覆盖固定八小时到期的旧表述；有效 Cookie Session 按前台活动续期，最多七天，不改变五分钟一次性 Browser Launch、来源撤销、凭据隔离或 Session scope。Bearer Credential 不获得浏览器会话续期能力。
 
@@ -179,11 +179,13 @@ v0 固定拆成三个按工作场景发现的能力，而不是一个塞满所�
 
 | Skill | 主要触发 | 职责 |
 | --- | --- | --- |
-| `cfkanban-deploy` | 部署、升级和检查 Cloudflare 实例 | 环境探测、Wrangler 登录、preflight、部署、migration、Owner bootstrap、验证与 receipt；按需调用内置 Node scripts |
+| `cfkanban-deploy` | 部署、升级和检查 Cloudflare 实例；首次趋势历史回填 | 环境探测、Wrangler 登录、preflight、部署、migration、Owner bootstrap、验证与 receipt；固定用途的派生投影维护，按需调用内置 Node scripts |
 | `cfkanban` | 查看/修改自己的显示名称；查找、创建、推进、阻塞、交接和完成 Issue；打开明确 Project/Issue | 默认日常入口；身份与 scope 读取、自助 profile 更新、调用 API/内置 scripts、context pack、Browser Launch 与错误恢复 |
 | `cfkanban-admin` | Workspace/Project、邀请、Grant、Credential 恢复、业务 tombstone 恢复和打开 Owner 管理页 | Owner-only 应用管理能力；对 Credential 恢复等安全敏感能力提供明确目标/影响摘要、一次授权协议与审计读回；不直接读取 D1 control plane |
 
 三个名称表达工作场景，不是 Agent 类型、Principal kind 或权限角色；同一个用户的 Agent 可以按当前任务和真实 Credential 权限调用其中任意 Skill。共享的 API/schema、平台差异和恢复细节放在一层 references 中；可重复且需要确定性的行为进入 bundle 内共享 Node modules/scripts，而不是三个 Skill 各自复制一份，公共 CLI 与 MCP 并列复用该共享层，详见[公共 CLI 增量](2026-10-04-public-cli-spec.md)。
+
+schema 30 的首次趋势回填属于 `cfkanban-deploy` 的控制面维护，不属于公开 batch/bulk 领域写入。`maintenance trends inspect/plan/run` 与 CLI `deploy trends inspect/plan/run` 绑定当前可信实例、Owner、已验证私有部署 receipt、准确 Cloudflare account/profile/Worker/D1 和不可变 Service 回填算法；禁止任意 SQL、来源或目标覆盖，不修改 Issue/Event/Grant。独立计划授权、私有 lock/journal、跨机 lease/fence、逐页 CAS、预算限速、D1 实际用量和未知结果读回遵循[趋势增量的历史回填合同](2026-10-10-issue-trends-spec.md#3-历史回填)。Web/API/MCP 仅读取覆盖信息，不能读取本机或 Cloudflare 凭据来执行维护。已获授权且无漂移的同计划继续不重复询问；新目标、资源、费用、权限或预算扩大会停止并重新核对授权。
 
 ### 4.1 Guidance 在 Skill 包中的落点
 

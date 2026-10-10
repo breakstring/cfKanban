@@ -4,7 +4,7 @@ Schema 5 通过新增迁移修复 alpha.55 遗漏的实例版本更新。manifes
 
 语言：[English](deployment-workflows.md) | [简体中文](deployment-workflows.zh-CN.md)
 
-按请求只读对应流程：本地安装使用 **Skill update**，新实例使用 **首次部署**，已验证既有资源使用 **Instance upgrade**，journal 中断操作使用 **中断与续做**。本地 Skill 更新不需要 Cloudflare 登录；既有实例升级不要求资源不存在。每个已安装 release 首次使用或输入不明确时运行 `node scripts/cfkanban-tool.mjs help`，查看命令 effect 和输入字段。
+按请求只读对应流程：本地安装使用 **Skill update**，新实例使用 **首次部署**，已验证既有资源使用 **Instance upgrade**，待处理历史队列使用 **首次趋势历史回填**，journal 中断操作使用 **中断与续做**。本地 Skill 更新不需要 Cloudflare 登录；既有实例升级不要求资源不存在。每个已安装 release 首次使用或输入不明确时运行 `node scripts/cfkanban-tool.mjs help`，查看命令 effect 和输入字段。
 
 ## 常见维护请求
 
@@ -159,6 +159,7 @@ Issue、Project、Owner 管理页及加入/部署/恢复后的应用访问统一
 | Migration 证明 | `migrations reconcile`、`migrations assess-ledger-recovery`、`migrations write-ledger-record-sql` | ledger/schema 一致性、同 journal 缺行恢复判断与 insert-only checksum record。 |
 | Skill update | `plan skill-update`、`release install-skill-bundle` | 新的已验证本地版本与 atomic active pointer。 |
 | Instance upgrade | `release install-service-bundle`、`plan instance-upgrade`、journal/deploy/migration commands、`deployment finalize-upgrade` | 使用已验证私有 Service cache 与脱敏 before/after receipt 的独立 pinned Cloudflare upgrade。 |
+| 首次趋势历史 | `maintenance trends inspect/plan/run` | receipt 绑定的不可变 Service 算法、本地 Node 执行、请求/D1 行数预算、有 fence 的单语句提交及私有实际用量 journal。 |
 | 本地读回 | `state inspect`、`origin rebind-check`、`api request` | 脱敏状态、trusted origin 连续性、认证后的 health/identity 检查。 |
 
 命令通过 stdin 接收结构化 JSON；Credential 生成与读取留在内部。`.mjs` 是采用显式 ES module 格式的普通 Node JavaScript，可直接由 `node` 运行，无需编译，并且安装到缺少 `package.json` 的 portable Skill 目录时仍不会产生模块语义歧义。
@@ -305,9 +306,23 @@ Worker 部署前检查当前 deployment、bindings 与 Cron，部署后核对真
 
 附件容量属于应用设置而非部署参数。启用 R2 后提示 Owner 到管理面板明确选择正整数字节上限或不限制；未配置时只暂停新上传预留。从旧固定 1 GiB 策略迁移的实例同样要求 Owner 显式选择，不静默改成不限制。部署不得写入该 D1 设置或覆盖既有 Owner 选择。该 Owner 配置策略适用于 schema 7 及以上；旧 schema 4–6 发行计划仍保留其历史固定 1 GiB 合同，不能宣称旧版本已经支持新设置。
 
+## 首次趋势历史回填
+
+当前入口要求带固定 Worker deployment/version 证据的已验证 `cfkanban_instance_upgrade_receipt`。全新 schema 30 实例没有冻结的旧历史队列，无需首次回填；仅有 bootstrap receipt 不满足此维护入口。
+
+schema 30 的首次历史处理独立于小时 Cron。用户要求补齐待处理的可恢复历史时，使用本流程；需当前 Owner 身份及准确 Cloudflare 部署的维护权限。它是固定用途的派生投影维护，不修改 Issue/Event 事实、Grant 或业务权限，不部署 Worker、不改 schedule，也不新增付费资源。Web/API/MCP 展示历史覆盖，不持有本机 Cloudflare 凭据或启动维护。
+
+1. `maintenance trends inspect` 输入 `{instanceId, currentReceiptPath, serviceBundleRoot, wranglerExecutable}`。使用实际部署版本的私有 receipt 及匹配的已验证不可变 Service 缓存，不使用源码工作树或插件副本。检查可信实例/origin、当前 Owner 连续性、准确 account/auth profile、Worker deployment/version、D1 UUID/binding 及 migration ledger/schema 30。返回 pending/partial 数量和 D1 检查的实际用量，不写历史；凭据留在安全模块内。
+2. 规划预算前，核对当前账户用量与剩余额度。向 `maintenance trends plan` 传入上述字段、`taskId`、可选 `operationId` 和 `budget`；返回 `{plan, plan_digest, inspection}`。计划冻结 receipt/来源摘要、Service 版本/schema、算法版本 1、Owner 与准确目标。不能覆盖 account/profile/Worker/database，不能传任意 SQL 或加载可变源码算法。
+3. 默认预算为 `batchSize: 8`、`maxPages: 1000`、`maxDurationMs: 1800000`、`maxRequests: 3000`、`requestIntervalMs: 500`、`rowsRead: 250000`、`rowsWritten: 50000`。只能减少工作量或放慢请求，不能扩大上限。每个 Issue 页最多读取 100 个投影后的 Event；启动下一页前预留读取 4000 行、写入 1000 行及控制请求。账户其他流量仍消耗额度，本地预算不表示账户费用封顶。
+4. 展示准确目标、影响、预算与计划摘要。已有明确授权覆盖时不重复询问；否则对这份具体计划取得授权。`maintenance trends run` 输入 `{instanceId, taskId, operationId, plan, authorization, currentReceiptPath, serviceBundleRoot, wranglerExecutable}`，其中 `authorization` 为匹配计划的 `{task_id, operation_id, instance_id, plan_digest}`。公共 CLI 同流程为 `cfkanban deploy trends inspect/plan/run`，非秘密结构化输入通过 `--input-file` 或 `--input-stdin` 提供。
+5. 同机私有 lock 与跨机 D1 120 秒 lease、递增 fence 共同防并发。每页使用稳定 batch ID、原 Issue version/cursor，单条 SQL 的触发器原子更新投影并推进队列，不依赖远程多语句请求的事务假设。旧 fence、过期 lease 或 CAS 冲突不能重复计数。请求至少间隔 500ms；达到预算、429、实际用量缺失、无进展或漂移即停止，不自动循环追赶整个 backlog。
+6. 核对安全摘要、receipt 与私有 journal。每批记录 D1 的 `meta.rows_read`、`meta.rows_written`、SQL 耗时、provider 请求数、队列进度和本地 Node CPU。Node CPU 不代表 Worker CPU，不能据此推断 Worker invocation CPU。journal 不保存 Event 正文、秘密或 SQL 参数。写响应不确定时保留原 operation/plan/batch ID，先读回提交标记；即使已证明提交，用量未知也停止，不能换键或盲目重放该页。
+7. 有界运行结束仍有待处理任务时，先核对实际用量、停止原因及剩余额度，再在用户授权内规划后续工作。完成需要队列/计数和趋势覆盖读回。待处理清零不代表不可靠的旧事件可恢复，`partial`、不同的存量/操作覆盖起点和图表 null 断点仍可能保留。
+
 ## 可选 Cloudflare 用量配置
 
-统计默认启用、按需刷新，不设置统计 Cron。默认部署不需要统计 Token、不新增资源；配置不完整时 API 返回 `not_configured`，附件应用预算仍可读取。schema 29 起核心 Issue 趋势回填使用小时维护触发器（`17 * * * *`），与附件清理共用；每次最多 8 个历史批次、每批 100 个事件，空队列只读一次。附件清理、可选用量采集和回填共同遵循 50 次子请求预算，启用可选模块时减少历史批次数；5 秒后不再启动新批次。该 schedule 显式进入部署计划，在部署前检查原 schedule、部署后核验实际 schedule；首次部署先完成 `worker_deployment_readback` 再 bootstrap，缺少证据不能 finalize。schema 28 及更早保留仅附件清理的原触发器约定。
+用量快照默认启用、按需刷新，不另设统计 Cron。默认部署不需要统计 Token、不新增资源；配置不完整时 API 返回 `not_configured`，附件应用预算仍可读取。schema 30 保留小时维护触发器（`17 * * * *`）处理附件清理与按日防重的可选用量历史采集，不处理首次趋势队列。附件清理最多 8 个对象、用量历史最多预留 9 次调用，共享 50 次子请求预算并保留 4 次余量；5 秒后不再启动维护工作，等待已发出的操作完成。该 schedule 显式进入部署计划，在部署前检查原 schedule、部署后核验实际 schedule；首次部署先完成 `worker_deployment_readback` 再 bootstrap，缺少证据不能 finalize。schema 29 保留历史每小时 3–8 个趋势页，schema 28 及更早保留原有仅附件清理的触发器约定。
 
 `plan instance-upgrade` 接受非秘密 `usageAnalytics: { enabled: true, account_id, d1_database_id, r2_bucket_name: null }`。资源必须与本实例一致，省略账户/数据库时从冻结目标解析。显式 `enabled: false` 关闭云端统计；省略整个参数保留原有启用或关闭配置及现有 `USAGE_ANALYTICS_TOKEN` secret binding。允许没有 Secret，此时表示未配置而非零用量。配置变化仍须部署授权；仅改变统计配置时可复用当前 Service 工件。
 

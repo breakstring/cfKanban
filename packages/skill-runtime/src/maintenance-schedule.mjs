@@ -16,8 +16,15 @@ export function maintenanceSchedule(plan) {
     : workerCrons(plan.current?.schema_version, Boolean(plan.resources?.r2 && !plan.resources.r2.create));
   const crons = workerCrons(targetSchema, Boolean(plan.resources?.r2));
   return { previous_crons: previous, crons, schedule_delta: canonicalDigest(previous) !== canonicalDigest(crons),
-    trend_backfill: { max_jobs_per_tick: 8, max_events_per_job: 100, empty_queue_reads_per_tick: 1,
-      shared_subrequest_budget: 50, stop_starting_batches_after_ms: 5000, attachment_batch_max: 8 } };
+    ...(targetSchema >= 30 ? {
+      initial_trend_backfill: { execution: "separate_bounded_node_maintenance", algorithm_version: 1,
+        automatic: false, worker_cpu_used: false },
+      hourly_maintenance: { trend_backfill: false, shared_subrequest_budget: 50,
+        stop_starting_batches_after_ms: 5000, attachment_batch_max: 8 },
+    } : {
+      trend_backfill: { max_jobs_per_tick: 8, max_events_per_job: 100, empty_queue_reads_per_tick: 1,
+        shared_subrequest_budget: 50, stop_starting_batches_after_ms: 5000, attachment_batch_max: 8 },
+    }) };
 }
 
 export function assertMaintenanceDeploymentEvidence(journal, plan) {

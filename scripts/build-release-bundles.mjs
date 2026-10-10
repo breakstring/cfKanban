@@ -1,4 +1,5 @@
 import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,13 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
   await generateBrandAssets({ check: true });
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error("version must be strict semver without build metadata");
   await verifyReleaseBuild({ repositoryRoot: repoRoot, version });
+  const backfillBuild = JSON.parse(await readFile(path.join(repoRoot, "apps/worker/dist/issue-trend-backfill-build.json"), "utf8"));
+  const backfillBytes = await readFile(path.join(repoRoot, "apps/worker/dist/issue-trend-backfill.mjs"));
+  if (backfillBuild.release_version !== version || backfillBuild.algorithm_version !== 1
+    || backfillBuild.entry !== "issue-trend-backfill.mjs"
+    || backfillBuild.sha256 !== createHash("sha256").update(backfillBytes).digest("hex")) {
+    throw new Error("Trend backfill artifact changed or belongs to another release; rebuild before packaging");
+  }
   await verifyCliBuild({ outputDirectory: path.join(repoRoot, "packages/cli/dist"), version });
   await verifyMcpBuild({ outputDirectory: path.join(repoRoot, "packages/mcp/dist"), version });
   await verifyEmbeddedBuild({ outputDirectory: path.join(repoRoot, "apps/web/dist-embedded"), version });
@@ -86,6 +94,8 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
     await mkdir(path.join(serviceRoot, "dist"), { recursive: true });
     await cp(path.join(repoRoot, "apps", "worker", "dist", "index.js"), path.join(serviceRoot, "dist", "index.js"));
     await cp(path.join(repoRoot, "apps", "worker", "dist", "index.js.map"), path.join(serviceRoot, "dist", "index.js.map"));
+    await cp(path.join(repoRoot, "apps", "worker", "dist", "issue-trend-backfill.mjs"), path.join(serviceRoot, "dist", "issue-trend-backfill.mjs"));
+    await cp(path.join(repoRoot, "apps", "worker", "dist", "issue-trend-backfill-build.json"), path.join(serviceRoot, "dist", "issue-trend-backfill-build.json"));
     const wranglerTemplateSource = path.join(serviceRoot, "wrangler.jsonc");
     const wranglerTemplate = JSON.parse(await readFile(wranglerTemplateSource, "utf8"));
     wranglerTemplate.$schema = "./wrangler-config-schema.json";

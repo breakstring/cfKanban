@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 29,
+  schema_version: 30,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -351,6 +351,16 @@ const manifest = {
         triggers: ["issue_trend_project_insert", "issue_trend_milestone_insert", "issue_trend_event"],
       },
       expected_data: { instance_meta_schema_version_at_least: 29, allow_uninitialized: true },
+    },
+    {
+      sequence: 30, name: "0030_issue_trend_backfill_maintenance.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0030_issue_trend_backfill_maintenance.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        tables: ["issue_trend_backfill_control"], columns: ["issue_trend_backfill.replay_json"],
+        triggers: ["issue_trend_backfill_commit"],
+      },
+      expected_data: { instance_meta_schema_version_at_least: 30, allow_uninitialized: true },
     },
   ],
 };

@@ -1,6 +1,6 @@
 ---
 name: cfkanban-deploy
-description: Install or update cfKanban Skills, deploy or upgrade Cloudflare instances, reconnect an existing deployment on another computer, resume interrupted deployments, and recover lost Owner access. Use for release and infrastructure lifecycle, not daily Issue work or Owner application settings.
+description: Install or update cfKanban Skills, deploy or upgrade Cloudflare instances, reconnect deployments, resume interrupted operations, recover lost Owner access, and run bounded initial Issue trend history backfill. Use for release and infrastructure maintenance, not daily Issue work or Owner application settings.
 ---
 
 # cfKanban Deploy
@@ -29,6 +29,7 @@ The audience is the person maintaining local Skills or hosting the Service. Clou
 - Update local Skills and upgrade a deployed Instance as two independent operations.
 - Perform controlled out-of-band recovery for the same Owner Principal after total Owner Credential loss.
 - Reconnect an existing deployment on another computer by verifying its resources, schema and current Owner, then saving a private local maintenance receipt without remote writes. Read the existing deployment attachment workflow first.
+- Inspect, plan and execute initial Issue trend history backfill with the verified deployed Service algorithm, bounded local Node batches, actual D1 usage and fenced progress. The hourly Cron remains daily maintenance; backfill does not edit Issue/Event facts or domain permissions.
 
 Loading this Skill is not authorization to install software, change local state, create cloud resources, migrate data, change DNS, recover an Owner, publish, or upgrade.
 
@@ -80,6 +81,7 @@ Choose the requested operation before planning:
 | Install/update cfKanban locally | **Skill update** and **Local MCP connection** in the reference; verify source/digest, switch the local release, check Skill discovery, and connect MCP on supported hosts unless explicitly Skills-only. No Cloudflare login or deployment. |
 | Create a new Instance | **First deployment** in the reference and the sequence below; new resource names must be absent. |
 | Upgrade an existing Instance | **Instance upgrade** in the reference; verify receipt/journal ownership of existing resources, current bindings, migrations, and restore evidence. Existing resources are expected. |
+| Fill recoverable trend history | **Initial trend history backfill** in the reference; inspect coverage and queue, freeze the verified deployment/Service algorithm and bounded budget, then execute only the authorized plan. No new Worker, Cron or billable resource. |
 | Resume interrupted work | **Interruption and resume** in the reference; use the same task/operation/digest and read back before continuing. |
 
 ## Task-to-command map
@@ -108,6 +110,7 @@ Choose the requested operation before planning:
 | Verify migrations | `migrations reconcile`, `migrations assess-ledger-recovery`, `migrations write-ledger-record-sql` | Check ordered manifest + insert-only checksum ledger + bounded schema artifacts. Checksum SQL is accepted only for the exact missing row proven recoverable by the same authorized journal and is fixed to that journal's private path. |
 | Install or update canonical Skills | `plan skill-update`, `release install-skill-bundle` | Required before a canonical first deployment when no matching verified release is active; local-only atomic version switch, with no Cloudflare or D1 write. |
 | Upgrade an Instance | `release install-service-bundle`, `plan instance-upgrade`, journal/deploy commands, `deployment finalize-upgrade` | Cache and re-verify the immutable Service bundle; freeze exact existing resources/current bindings, migration and restore evidence, deploy, then verify the unchanged Owner Credential and write an idempotent redacted before/after receipt. Do not update local Skills implicitly. |
+| Fill initial Issue trend history | `maintenance trends inspect`, `maintenance trends plan`, `maintenance trends run` | Schema 30 only; bind trusted Instance/Owner, private deployment receipt, exact Cloudflare targets and immutable Service algorithm. Local Node computes pages; single-statement D1 CAS commits, lease/fence, bounded budgets and actual-usage journal prevent blind replays. Public CLI: `deploy trends inspect/plan/run`. |
 | Recover lost Owner access | `owner-recovery discover` when the target is unknown, then `owner-recovery inspect`, `plan owner-recovery`, and authorized `owner-recovery execute` | Dedicated recovery plan/journal; preserve the same Owner and Passkeys, revoke every previous Owner API Credential, verify the operation and promote the replacement secret. Never reuse first-deployment bootstrap commands. |
 | Hand off to first-use setup | `cfkanban-admin` after deployment verification | Deployment alone creates no Workspace or Project; offer the next prompt but do not silently perform application writes. |
 

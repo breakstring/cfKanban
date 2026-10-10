@@ -48,6 +48,18 @@ test("schema upgrades reuse attachment Cron and preserve new core Cron without d
   const drift = upgrade(28, 29); drift.maintenance.trend_backfill.max_jobs_per_tick = 100;
   assert.throws(() => deploymentCrons(drift), { code: "MAINTENANCE_PLAN_REQUIRED" });
 });
+test("schema 30 separates initial projection rebuild from hourly maintenance and preserves the existing schedule", () => {
+  const plan = upgrade(29, 30, true);
+  assert.deepEqual(plan.maintenance.previous_crons, ["17 * * * *"]);
+  assert.deepEqual(deploymentCrons(plan), ["17 * * * *"]);
+  assert.equal(plan.maintenance.schedule_delta, false);
+  assert.equal(plan.maintenance.trend_backfill, undefined);
+  assert.deepEqual(plan.maintenance.initial_trend_backfill, { execution: "separate_bounded_node_maintenance",
+    algorithm_version: 1, automatic: false, worker_cpu_used: false });
+  assert.equal(plan.maintenance.hourly_maintenance.trend_backfill, false);
+  plan.maintenance.hourly_maintenance.trend_backfill = true;
+  assert.throws(() => deploymentCrons(plan), { code: "MAINTENANCE_PLAN_REQUIRED" });
+});
 test("schedule preflight and readback refuse missing, additional, or duplicate remote triggers", async () => {
   const plan = upgrade(28, 29), seen = [];
   const inspect = (phase, crons) => verifyPlannedMaintenanceSchedule({ plan, phase, wranglerExecutable: "/mock/wrangler",

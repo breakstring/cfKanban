@@ -4,6 +4,7 @@
 - 日期：2026-10-10
 - 执行任务：[CFK-715](https://cfkanban.dev/app/issues/CFK-715)
 - 确认依据：用户授权实施 CFK-715，确认第一版提供项目/工作区未完成存量、每日新增/完成，以及里程碑总范围/完成燃起图，并选择回填已有可恢复历史。
+- 维护修订：[CFK-730](https://cfkanban.dev/app/issues/CFK-730)，用户于 2026-10-10 授权将首次回填与小时维护分离，连续执行有界小批次并记录实际用量。本修订适用于 schema 30；schema 29 已发行的小时回填行为保留为历史合同。
 - 上游：Foundation、API / Schema、项目里程碑、Web UI、公共 CLI、容器清理及事件历史合同。
 
 ## 1. 第一版范围
@@ -37,11 +38,21 @@
 
 首版分批重建可校验的已有历史，无法恢复的区段保留缺失标记。迁移原子冻结当前 Issue 状态和 Event 水位，实时写入继续记录水位之后的操作；回填只处理冻结的旧事件。每个 Issue 按 sequence 倒序有界读取，批次使用 CAS 和事务内标记保护所有派生写入，重复执行或并发争用不能重复计数。回填完成后才公开经过校验的历史覆盖范围。
 
-schema 29 起部署计划显式冻结并读回小时维护 Cron `17 * * * *`，与已有附件清理共用同一个触发器，不要求启用 R2。每次最多处理 8 个 Issue 历史批次，每批最多 100 个 Event；共享 50 次 subrequest 预算，按启用的附件清理与用量历史收窄到 3–8 批，D1 batch 内每条 statement 独立计入。附件定时清理最多 8 个对象，预留用量历史最多 9 次调用及 4 次余量。5 秒后不再启动新批次，已发出的原子 SQL 等待其结果；不通过 Promise.race 遗留在途写入。无待处理任务时只做一次队列查询；不在一轮中追赶整个 backlog。游标必须严格递减，无法前进则安全终止并标记缺损，不原地重复。新部署、升级和已有部署接入按实际 schema 核对 schedule；计划外触发器拒绝覆盖。更早的部署保留原有 schedule 合同。
+schema 30 起首次回填由独立的本地 Node 维护流程执行，小时 Cron 不再读取或重放历史队列。部署计划仍显式冻结并读回 `17 * * * *`；该触发器只处理既有附件清理与按日防重的可选用量历史维护，不要求启用 R2。附件定时清理最多 8 个对象，用量历史最多 9 次调用及 4 次余量，共享 50 次 subrequest 上限；5 秒后不启动新维护工作，已发出的操作等待结果。新部署、升级和已有部署接入按实际 schema 核对 schedule，计划外触发器拒绝覆盖。schema 29 保留原有每小时 3–8 个 Issue 批次的回填行为，schema 28 及更早保留其原 schedule 合同。
 
-平台限制在 2026-10-10 核对：[D1](https://developers.cloudflare.com/d1/platform/limits/) Free 为 50 queries/invocation，[Workers](https://developers.cloudflare.com/workers/platform/limits/#cpu-time) Free Cron CPU 为 10ms。共享调用预算不能证明生产 CPU / 账单；本地记录读写行数、运行时计算耗时与调用次数，上线后仍以真实 Analytics / invocation outcome 核验。
+维护入口为部署 Skill 的 `maintenance trends inspect/plan/run` 和公共 CLI 的 `deploy trends inspect/plan/run`。`inspect` 与 `plan` 只读；`run` 是部署控制面中专用于派生投影的受控写入，不新增 Web/API 写入口，也不改变 Issue、Event、Grant 或领域权限。Web、日常 Skills/API 与 MCP 继续只读历史覆盖信息；Web 不持有本机或 Cloudflare 凭据。
+
+当前维护入口使用带固定 Worker deployment/version 证据的已验证升级 receipt；全新 schema 30 实例没有冻结旧历史队列，无需首次回填，bootstrap receipt 不满足此入口。计划固定已验证的私有升级 receipt、不可变 Service bundle 的完整 tree/工件摘要及回填算法版本，并绑定可信实例/origin、当前 Owner、准确 Cloudflare account/profile、Worker deployment/version、D1 UUID 和 schema 30。执行前重新核验本地来源、远端身份、绑定、版本及 migration ledger；不能从浮动源码加载算法、覆盖目标或提供任意 SQL。算法版本 1 在本地 Node 重放每个 Issue 的最多 100 个 Event，仅投影必要事件字段；按冻结水位倒序推进，游标不能原地循环。
+
+默认单次计划预算为：每批最多 8 个 Issue 页、最多 1000 页、最多 30 分钟、最多 3000 次 provider 请求，请求间隔至少 500ms，D1 读取 250000 行、写入 50000 行。预算只能减少工作量或放慢请求；开始下一页前保守预留读取 4000 行、写入 1000 行及控制请求。计划前核对当前账户用量和剩余额度，预算不代替账户其他流量的计费核验。到达预算、429、实际用量元数据缺失、队列无进展或目标漂移时停止，保留原计划和进度，不自动循环追赶。
+
+同机私有 lock、跨机 D1 120 秒 lease 与递增 fence 共同限制并发。每页用稳定 batch ID 和原 Issue version/cursor 做 CAS；一条 SQL 的触发器在同一原子单元内写入日投影、推进队列并更新完成覆盖。过期 lease、旧 fence、重复提交及 CAS 争用不得重复计数，不依赖远程多条 SQL 请求的事务假设。每批记录 D1 返回的实际 `meta.rows_read`、`meta.rows_written`、SQL 耗时、provider 请求数和前后待处理数量，并单独记录本地 Node CPU；它不是 Worker CPU。journal 不保存 Event 正文、Credential 或 SQL 参数。响应不确定时先按原 batch ID 读回是否提交；用量仍未知就停止，不换键或盲目重放。
+
+平台限制在 2026-10-10 核对：[D1](https://developers.cloudflare.com/d1/platform/limits/) Free 为 50 queries/invocation，[Workers](https://developers.cloudflare.com/workers/platform/limits/#cpu-time) Free Cron CPU 为 10ms。首次回填计算不占用 Worker Cron CPU；实际 D1 用量和账户 Analytics 仍需分别读回，不能把 Node CPU 或共享请求预算当作生产 Worker CPU / 账单证明。
 
 历史回填不能放在每次趋势 GET 中，也不能由 Web 拉取所有 Issue 或全部事件完成；不能用 Issue.updated_at 推断完成时间。Event sequence 用于状态链处理，真实事件时间用于日期分桶，不假设两者顺序一致。不能可靠验证的旧状态、缺少创建事件及时间异常按保守缺损处理；历史缺损不能因后台重试而伪装成完整。
+
+队列清空仅表示冻结的历史已处理完。不可恢复的旧事件仍保留 `partial`、不同的存量/操作覆盖起点及图表 null 断点，不能将“待处理为零”报告为所有历史完整。
 
 ## 4. 服务端与读取边界
 
@@ -73,5 +84,7 @@ API、CLI 和 Skills 使用相同时间窗口、覆盖信息和统计语义；MC
 使用隔离本地数据覆盖空项目、零变化日、创建/完成/取消/重开、重复完成、软删除/恢复、父子独立计件、里程碑范围变化、UTC 跨日、缺失日期、当前未结束日、聚合缺损、权限交集与撤销、固定 Session、归档/恢复/purge、CAS/幂等/回滚和历史起点。
 
 数据库验收记录代表性规模的读取行数、写入行数及查询计划；时间窗口和 LIMIT 本身不证明读量有界。Web 验证响应式、键盘、双语、异步结果隔离及现有构建预算。最终执行相关合同、D1、类型和构建检查。
+
+首次回填维护还须覆盖 schema 29→30 兼容、单语句投影事务回滚、CAS 重放、过期 lease/旧 fence/跨机争用、不可变来源及目标漂移拒绝、预算与请求限速、未知响应读回、缺失实际用量即停止、空队列与无进展，以及 Cron 不再重放历史。线上验收记录队列前后变化、实际读写用量、覆盖/缺损和部署 schedule；不向线上注入测试故障。
 
 本卡源码实施与本地验收不包含 Git commit/push、发行、线上 migration 或部署。

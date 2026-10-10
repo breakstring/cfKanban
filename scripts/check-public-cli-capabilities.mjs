@@ -119,7 +119,7 @@ function fixtureValue(field) {
   if (field.schema?.type === 'integer' || field.schema?.type === 'number') return Math.max(1, field.schema.minimum ?? 0);
   if (field.schema?.type === 'boolean') return true;
   if (field.schema?.type === 'array') return [];
-  if (field.schema?.type === 'object') return {};
+  if (field.schema?.type === 'object' || Array.isArray(field.schema?.type) && field.schema.type.includes('object')) return {};
   if (field.name === 'identifier' || field.name.endsWith('_identifier')) return 'CFK-123';
   return 'offline-doc-fixture';
 }

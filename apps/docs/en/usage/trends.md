@@ -19,7 +19,9 @@ A session fixed to a single Issue cannot read project or workspace trends. Ask y
 
 Workspace charts include only active Projects you can currently read, within your current login scope. A Project-limited login does not show inaccessible Projects. Check the returned Project list when comparing reports: changing permissions or archiving a Project changes the included scope. Restoring a Project makes its available history readable again; permanently deleting it removes its recoverable history.
 
-Existing saved history is included where it can be recovered. Older history is processed in background batches; when coverage is `pending`, refresh later rather than expecting immediate backfill. A gap is **unavailable**, not zero; charts leave that segment empty. The response lists each Project's `stock_from`, `flow_from` and `history_state` (`pending`, `complete` or `partial`). Stock and flow may start on different dates. A Workspace aggregate is unavailable for a metric if any included Project lacks that metric's coverage.
+Existing saved history is included where it can be recovered. When coverage is `pending`, the maintainer can [run the initial history backfill](../deployment/updates.md#fill-existing-trend-history) in bounded batches; opening or refreshing a chart does not start it. On schema 30, this runs separately from hourly maintenance. After the queue is processed, refresh the chart to see the verified coverage.
+
+A gap is **unavailable**, not zero; charts leave that segment empty. The response lists each Project's `stock_from`, `flow_from` and `history_state` (`pending`, `complete` or `partial`). Stock and flow may start on different dates. Processing the whole queue cannot restore missing or unreliable old events, so `partial` and gaps may remain. A Workspace aggregate is unavailable for a metric if any included Project lacks that metric's coverage.
 
 Trends use their own date and scope selection. Board/list status, assignee, priority, Label and text filters do not apply. Milestone membership is optional; use [Project milestones](milestones.md) to maintain it.
 

@@ -1859,6 +1859,30 @@
         "kind": "api",
         "operation": "getWorkspaceIssueTrends"
       }
+    },
+    {
+      "command": "deploy trends inspect",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "maintenance trends inspect"
+      }
+    },
+    {
+      "command": "deploy trends plan",
+      "effect": "plan",
+      "route": {
+        "kind": "helper",
+        "command": "maintenance trends plan"
+      }
+    },
+    {
+      "command": "deploy trends run",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "trend-backfill-run"
+      }
     }
   ],
   "operations": [
@@ -5550,6 +5574,52 @@
           {
             "file": "packages/cli/src/workflows.mjs",
             "contains": "helper('waf-target apply',input)"
+          }
+        ]
+      }
+    },
+    {
+      "command": "maintenance trends inspect",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane_and_authenticated_http",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy trends inspect"
+        ]
+      }
+    },
+    {
+      "command": "maintenance trends plan",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane_and_plan",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy trends plan"
+        ]
+      }
+    },
+    {
+      "command": "maintenance trends run",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_d1_history_write_and_private_journal",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy trends run"
+        ],
+        "note": "公共CLI复用同一维护runtime，按不可变Service算法、授权journal与fenced lease推进有界历史回填。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('maintenance trends run'"
           }
         ]
       }

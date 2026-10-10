@@ -26,6 +26,18 @@ You need current Owner access, Cloudflare account authority, and local maintenan
 
 Use an Agent to upgrade; there is no Web upgrade button. If older Skills cannot handle the new release, update the local Skills first using the installation guide.
 
+## Fill existing trend history
+
+For schema 30 or later supported by the installed release, initial Issue trend backfill is separate from hourly attachment and usage-history maintenance. It needs current Owner access, Cloudflare deployment authority and verified local maintenance records. It processes only recoverable history into derived statistics; it does not edit Issues or add project permissions. Opening a chart does not run it.
+
+```text
+Use $cfkanban-deploy to inspect this Instance's pending trend history and current usage.
+Prepare a bounded initial backfill plan using the verified deployed Service, then run it within my authorization.
+Report actual D1 reads/writes, progress and any history that remains unavailable.
+```
+
+The Agent checks remaining allowance, pins the actual deployment and immutable backfill algorithm, and records each bounded batch's actual usage. It stops on budget limits, uncertain usage/results, throttling or drift. Follow the [CLI maintenance workflow](../cli/deployment.md#initial-trend-history-backfill) for terminal use. A cleared queue can still have `partial` coverage when older events cannot be reconstructed; see [Issue trends](../usage/trends.md).
+
 ## Optional upgrade announcements
 
 The Owner can enable [automatic upgrade announcements](../administration/settings.md#announce-successful-upgrades-automatically); they start disabled. A compatible runtime checks the setting only after the actual deployment and new release have been verified. It announces forward stable/`rc.N` changes once per release (alpha, beta and other prerelease channels are skipped with `unsupported_channel`). The announcement includes the actual previous and new versions, the Release link, and a bilingual request you can copy to your Agent to use the `cfkanban-deploy` skill to update your local cfKanban plugin and Skills to that exact new version. The request updates only the local installation; it does not upgrade the site again. Upgrading the site or reading the announcement does not automatically update your local plugin or Skills.

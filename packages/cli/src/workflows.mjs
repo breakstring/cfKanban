@@ -22,6 +22,7 @@ function assertAuthorization(input) {
 }
 export async function runWorkflow(name,input,context) {
   const {helper,api}=context;
+  if(name==='trend-backfill-run') return helper('maintenance trends run',input);
   if(name==='public-access-apply'||name==='waf-target-apply') {
     assertAuthorization(input);
     await helper('journal create',input);
