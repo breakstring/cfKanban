@@ -73,3 +73,7 @@ cfkanban web open
 Local mode is the default and needs its CLI process to keep running. Explicit online mode uses the existing safe Browser Launch flow; inspect installed help for the options. A host sidebar uses that host's exposed view tool. For first access, use the [join and sign-in guide](../usage/access.md); for extra parameters or context defaults, use the [reference](./reference.md). Administration and deployment are separate tasks.
 
 Use `--q-mode typed` to match titles (at least two characters) or number prefixes (`62`, `CFK-62`, or a complete `CFK-1`). Typed numeric input searches numbers only. Omitting the mode keeps the existing exact-identifier or title-substring search. Preserve the mode and all filters when requesting the next page; `issue counts` accepts the same mode within one Project.
+
+## Issue trends
+
+Read authorized UTC daily stock and creation/completion operations with `issue trends --days 30` or `workspace issue trends --days 30`. Add one milestone UUID to Project trends, or repeat `--project` to narrow Workspace scope. The current day is partial, and unavailable history is null rather than zero. See [Issue trends](../usage/trends.md) for date, scope and coverage semantics.

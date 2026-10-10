@@ -1,9 +1,10 @@
 import { toolError } from "./errors.mjs";
 import { requireUuid } from "./utils.mjs";
-import { ATTACHMENT_CLEANUP_CRON, attachmentBucketName } from "./r2-storage.mjs";
+import { attachmentBucketName } from "./r2-storage.mjs";
 import { COST_PROTECTION_NAMES, costProtectionBindings } from "./cost-protection-config.mjs";
 import { PUBLIC_ACCESS_NAMES, publicAccessBindings } from "./public-access-config.mjs";
 import { OWNER_CONTROL_VARS, ownerControlVars } from "./owner-control-config.mjs";
+import { assertMaintenanceSchedule, workerCrons } from "./maintenance-schedule.mjs";
 
 export const USAGE_SECRET = "USAGE_ANALYTICS_TOKEN";
 export const USAGE_VARS = new Set(["USAGE_ANALYTICS_ENABLED", "USAGE_ACCOUNT_ID", "USAGE_D1_DATABASE_ID", "USAGE_R2_BUCKET_NAME", "USAGE_WORKER_NAME", "USAGE_BILLING_CYCLE_DAY", "USAGE_BILLING_PLAN", "USAGE_ACCOUNT_TOTALS_ENABLED", "USAGE_WARNING_PERCENT", "USAGE_R2_STANDARD_ONLY_SCOPE"]);
@@ -107,7 +108,8 @@ export function usageBindings(config, secretPresent) {
 }
 
 export function deploymentCrons(plan) {
-  return plan.resources?.r2 ? [ATTACHMENT_CLEANUP_CRON] : [];
+  assertMaintenanceSchedule(plan);
+  return workerCrons(plan.kind === "strict_zero_deploy" ? plan.release?.schema_version : plan.target?.schema_version, Boolean(plan.resources?.r2));
 }
 
 export function targetWorkerBindings(plan) {

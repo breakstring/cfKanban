@@ -224,8 +224,12 @@ test("physical Issue removal expires offline delta and snapshot cursors while a 
   assert.equal(deletedHead.revision, oldHead.revision + 1);
   assert.equal((await changes(cached.next_cursor)).items.find(item => item.id === issue.id)?.kind, "remove");
 
-  // 独立夹具直接触发物理行清理；当前公共 purge API 只提供归档整项目删除。
-  await db.prepare("DELETE FROM issues WHERE id=?1").bind(issue.id).run();
+  // 当前公共 purge API 只提供整项目删除；夹具沿用其派生清理顺序再验证 Issue 物理移除。
+  await db.batch([
+    ...["issue_trend_backfill", "issue_trend_states", "issue_trend_days", "issue_trend_totals", "issue_trend_projects"]
+      .map(table => db.prepare(`DELETE FROM ${table} WHERE project_id=?1`).bind(project.id)),
+    db.prepare("DELETE FROM issues WHERE id=?1").bind(issue.id),
+  ]);
   assert.equal(await db.prepare("SELECT 1 FROM search_index_changes WHERE id=?1").bind(issue.id).first(), null);
   await assert.rejects(changes(cached.next_cursor), error => error.code === "CURSOR_EXPIRED");
   await assert.rejects(snapshot(cached.next_cursor), error => error.code === "CURSOR_EXPIRED");

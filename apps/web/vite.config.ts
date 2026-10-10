@@ -43,8 +43,9 @@ export default defineConfig({
     outDir: "dist",
     rolldownOptions: {
       output: {
-        // 共享模块的入口集合保留在 manifest，避免长文件名撑大入口依赖表。
+        // 共享模块的入口集合保留在 manifest，避免 JS/CSS 长文件名撑大入口依赖表。
         chunkFileNames: chunk => chunk.name.startsWith("shared~") ? "assets/shared-[hash].js" : "assets/[name]-[hash].js",
+        assetFileNames: asset => asset.names.some(name => name.startsWith("shared~") && name.endsWith(".css")) ? "assets/shared-[hash][extname]" : "assets/[name]-[hash][extname]",
         codeSplitting: {
           groups: [
             { name: "bootstrap", tags: ["$initial"], priority: 100 },

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -132,7 +132,9 @@ try {
   assert.ok(json, `Wrangler did not return JSON: ${output}`);
   const parsed = JSON.parse(json);
   const tableCount = parsed[0]?.results?.[0]?.table_count;
-  assert.equal(tableCount, 51, "Wrangler D1 should contain 50 application tables and the deployment migration ledger");
+  const manifest = JSON.parse(await readFile(new URL("../migrations/manifest.json", import.meta.url), "utf8"));
+  const expectedTables = new Set(manifest.migrations.flatMap(entry => entry.expected_artifacts.tables ?? []));
+  assert.equal(tableCount, expectedTables.size, "Wrangler D1 must contain all application tables and the deployment migration ledger declared in the manifest");
   assert.equal(parsed[0]?.results?.[0]?.container_key_count, 0, "final local D1 schema must not contain container keys");
   await validateBatchWorker();
   console.log("Wrangler local D1 applied the ordered migrations and returned the expected schema.");

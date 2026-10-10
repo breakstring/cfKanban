@@ -2,6 +2,7 @@ import { createCloudflareControlClient } from "./cloudflare-control.mjs";
 import { plannedProtectionBindingDelta } from "./cost-protection-config.mjs";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
+import { maintenanceSchedule } from "./maintenance-schedule.mjs";
 import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { resolveStateRoot } from "./paths.mjs";
 import { assertNoSymlinkPath, readJson, requireString, requireUuid } from "./utils.mjs";
@@ -114,7 +115,7 @@ export function assertAttachmentStoragePlan(plan) {
     || plan.cost_delta !== storage.create || plan.binding_changes_allowed !== (storage.create || JSON.stringify(plan.usage_analytics?.configuration) !== JSON.stringify(plan.usage_analytics?.previous_configuration) || plannedProtectionBindingDelta(plan))
     || plan.attachment_storage?.subscription_required !== true || plan.attachment_storage?.usage_beyond_free_tier_is_billable !== true || plan.attachment_storage?.automatic_bucket_deletion !== false
     || plan.attachment_storage?.previous_bucket !== (storage.create ? null : storage.bucket_name)
-    || JSON.stringify(plan.attachment_storage?.previous_cleanup_crons) !== JSON.stringify(storage.create ? [] : [ATTACHMENT_CLEANUP_CRON])
+    || JSON.stringify(plan.attachment_storage?.previous_cleanup_crons) !== JSON.stringify(maintenanceSchedule(plan)?.previous_crons ?? (storage.create ? [] : [ATTACHMENT_CLEANUP_CRON]))
     || JSON.stringify(plan.attachment_storage?.cleanup_crons) !== JSON.stringify([ATTACHMENT_CLEANUP_CRON])) {
     throw toolError("R2_PLAN_REQUIRED", "R2 storage, ownership, cost, binding, and cleanup schedule must match the frozen plan");
   }
@@ -128,7 +129,7 @@ export async function verifyPlannedAttachmentWorker(input) {
   if (!/^[a-z0-9][a-z0-9-]*$/u.test(name)) throw toolError("INVALID_RESOURCE_NAME", "Worker name is invalid");
   const client = await createCloudflareControlClient(plannedConnection(input), `/workers/scripts/${name}/schedules`);
   const result = await client("");
-  const expected = phase === "before" && plan.resources.r2.create ? [] : [ATTACHMENT_CLEANUP_CRON];
+  const expected = phase === "before" ? (maintenanceSchedule(plan)?.previous_crons ?? (plan.resources.r2.create ? [] : [ATTACHMENT_CLEANUP_CRON])) : [ATTACHMENT_CLEANUP_CRON];
   if (!Array.isArray(result?.schedules) || result.schedules.length !== expected.length || result.schedules.some((schedule, index) => schedule?.cron !== expected[index])) throw toolError("R2_CLEANUP_SCHEDULE_DRIFT", "Worker Cron triggers do not match the planned attachment cleanup schedule");
   if (phase === "after") {
     const r2Bindings = version?.bindings?.filter((binding) => binding.type === "r2_bucket" || binding.name === "ATTACHMENTS");

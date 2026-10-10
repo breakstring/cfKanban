@@ -1,5 +1,7 @@
 # cfKanban API & D1 Schema SPEC
 
+> 2026-10-10 增量：[Issue 趋势](2026-10-10-issue-trends-spec.md)（Frozen）增加有界工作区 / 项目趋势、里程碑燃起图与已有历史回填，Web、Agent 和 CLI 共用统计及权限口径。
+
 > 2026-10-09 增量：[项目里程碑](2026-10-09-project-milestones-spec.md)（Frozen）增加项目内交付节点、可选单一 Issue 归属与当前进度；趋势图单独规划。
 
 > 2026-10-01 增量：[Web 会话活动续期](2026-10-01-web-session-renewal-spec.md)（Frozen）覆盖固定八小时到期的旧表述，定义 Cookie-only 续期、CAS/幂等、三十分钟节流、七天上限、schema 17 及草稿恢复；不改变 Browser Launch、来源撤销或 Session scope。

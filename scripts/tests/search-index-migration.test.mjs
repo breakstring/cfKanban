@@ -92,6 +92,10 @@ test("search change retention is bounded per project and physical purge removes 
     db.exec("COMMIT");
     assert.deepEqual({ ...db.prepare("SELECT revision,retained_after FROM search_index_projects").get() }, { revision: 10005, retained_after: 5 });
     assert.equal(db.prepare("SELECT count(*) AS n FROM search_index_changes").get().n, 10000);
+    // 模拟正式 Project purge 的派生清理，再验证 Issue 物理移除触发搜索清理。
+    for (const table of ["issue_trend_backfill", "issue_trend_states", "issue_trend_days", "issue_trend_totals", "issue_trend_projects"]) {
+      db.prepare(`DELETE FROM ${table} WHERE project_id=?1`).run("project");
+    }
     db.exec("DELETE FROM issues WHERE id='issue'");
     assert.equal(db.prepare("SELECT count(*) AS n FROM search_index_documents").get().n, 0);
     assert.equal(db.prepare("SELECT count(*) AS n FROM search_index_changes").get().n, 0);

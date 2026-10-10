@@ -1,5 +1,7 @@
 # cfKanban 极简 Web UI SPEC
 
+> 2026-10-10 增量：[Issue 趋势](2026-10-10-issue-trends-spec.md)（Frozen）增加有界工作区 / 项目趋势、里程碑燃起图与已有历史回填，Web、Agent 和 CLI 共用统计及权限口径。
+
 > 2026-10-09 增量：[项目里程碑](2026-10-09-project-milestones-spec.md)（Frozen）增加项目内交付节点、可选单一 Issue 归属与当前进度；趋势图单独规划。
 
 > 2026-10-01 增量：[Web 会话活动续期](2026-10-01-web-session-renewal-spec.md)（Frozen）覆盖固定八小时到期的旧表述；仅真实前台输入触发续期，后台读取不续期，草稿留在当前页面内存并由本人重新登录后显式恢复，不自动重放写入。

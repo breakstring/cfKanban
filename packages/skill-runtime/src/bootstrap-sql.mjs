@@ -12,6 +12,8 @@ import {
 import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { reconcileMigrationState } from "./migrations.mjs";
 import { toolError } from "./errors.mjs";
+import { deploymentCrons } from "./usage-config.mjs";
+import { assertMaintenanceDeploymentEvidence } from "./maintenance-schedule.mjs";
 import {
   assertNoSymlinkPath,
   atomicWritePrivateText,
@@ -172,6 +174,12 @@ export async function loadAuthorizedDeploymentContract({ stateRoot, facts, taskI
   const schemaVersion = migrationManifest?.schema_version;
   if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 1) {
     throw toolError("SERVICE_BUNDLE_INCOMPLETE", "Service bundle migration manifest has an invalid schema version");
+  }
+  if (schemaVersion >= 29) {
+    if (plan.release.schema_version !== schemaVersion || canonicalDigest(config.triggers?.crons ?? []) !== canonicalDigest(deploymentCrons(plan))) {
+      throw toolError("MAINTENANCE_PLAN_REQUIRED", "The applied schema requires the exact frozen maintenance schedule");
+    }
+    assertMaintenanceDeploymentEvidence(journal, plan);
   }
   const latestMigrationReadback = [...journal.events].reverse().find((event) => event?.type === "command_finished" && event.action === "migration_ledger_readback") || null;
   if (latestMigrationReadback?.exit_code !== 0 || latestMigrationReadback.migration_readback === undefined) {

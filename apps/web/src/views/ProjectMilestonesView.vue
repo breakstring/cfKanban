@@ -13,6 +13,7 @@ import { boardFilters, boardPath, boardReturnPath } from "../lib/board-navigatio
 import { captureCasConflict, markCasReadbackComplete, markCasReadbackFailed, type CasConflictState } from "../lib/cas-recovery";
 import { ColumnPagination } from "../lib/column-pagination";
 import { locale, t } from "../lib/i18n";
+import { canReadIssueTrends } from "../lib/issue-trends";
 import { useLocalizedError } from "../lib/localized-error";
 import { isMilestoneWriteResult } from "../lib/milestones";
 import { protectNavigationDraft } from "../lib/navigation-draft";
@@ -148,6 +149,11 @@ function changeStatus(item: MilestoneResource): void {
 function viewIssues(item: MilestoneResource): void {
   navigate(boardPath(props.workspaceId, props.projectId, { search: "", priorities: [], labels: [], milestone: item.id, view: "list", expanded: ["backlog", "todo", "in_progress", "done", "canceled"] }));
 }
+function viewTrends(item?: MilestoneResource): void {
+  const params = new URLSearchParams({ from: returnTo });
+  if (item) params.set("milestone", item.id);
+  navigate(`/app/w/${props.workspaceId}/p/${props.projectId}/trends?${params}`);
+}
 watch(status, () => { generation += 1; void load(); });
 watch(() => sessionBoundaryKey(props.session), () => {
   generation += 1; projectRequest += 1; project.value = null; page.reset(); busy.value = false; clearError();
@@ -167,6 +173,7 @@ onUnmounted(() => { generation += 1; projectRequest += 1; page.reset(); });
           <button class="board-view-label board-view-inactive" type="button" :aria-pressed="false" @click="navigate(boardPath(workspaceId, projectId, boardOnly))"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ ui('Board', '看板') }}</button>
           <button class="board-view-label board-view-inactive" type="button" :aria-pressed="false" @click="navigate(boardPath(workspaceId, projectId, { ...boardView, view: 'list' }))"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4h10M7 10h10M7 16h10M3 4h.01M3 10h.01M3 16h.01" /></svg>{{ ui('List', '列表') }}</button>
           <button class="board-view-label" type="button" :aria-pressed="true" aria-current="page">{{ ui('Milestones', '里程碑') }}</button>
+          <button v-if="canReadIssueTrends(session, workspaceId, projectId)" class="board-view-label board-view-inactive" type="button" @click="viewTrends()">{{ ui('Trends', '趋势') }}</button>
         </div>
         <div class="board-filter-controls" role="group" :aria-label="ui('Milestone filters', '里程碑筛选')">
           <USelect v-model="status" :disabled="busy || !!pending" :items="[{ value: 'all', label: ui('All milestones', '全部里程碑') }, { value: 'open', label: ui('Open', '开放') }, { value: 'closed', label: ui('Closed', '已关闭') }]" :aria-label="ui('Milestone status', '里程碑状态')" />
@@ -186,7 +193,7 @@ onUnmounted(() => { generation += 1; projectRequest += 1; page.reset(); });
           <MarkdownContent v-if="item.description" class="milestone-description" :source="item.description" />
           <dl class="milestone-progress"><div><dt>{{ ui('Total', '总数') }}</dt><dd>{{ item.progress.total }}</dd></div><div><dt>{{ ui('Done', '已完成') }}</dt><dd>{{ item.progress.done }}</dd></div><div><dt>{{ ui('Unfinished', '未完成') }}</dt><dd>{{ item.progress.unfinished }}</dd></div><div><dt>{{ ui('Canceled', '已取消') }}</dt><dd>{{ item.progress.canceled }}</dd></div></dl>
         </div>
-        <div class="milestone-actions"><UButton color="neutral" variant="outline" type="button" @click="viewIssues(item)">{{ ui('View Issues', '查看事项') }}</UButton><UButton v-if="canWrite && item.allowed_actions.includes('update')" color="neutral" variant="ghost" type="button" :disabled="busy || !!pending || !!conflict" @click="openEditor(item)">{{ ui('Edit', '编辑') }}</UButton><UButton v-if="canWrite && item.allowed_actions.includes('update')" color="neutral" variant="ghost" type="button" :disabled="busy || !!pending || !!conflict" @click="changeStatus(item)">{{ item.status_key === 'open' ? ui('Close milestone', '关闭里程碑') : ui('Reopen milestone', '重新开放') }}</UButton></div>
+        <div class="milestone-actions"><UButton color="neutral" variant="outline" type="button" @click="viewIssues(item)">{{ ui('View Issues', '查看事项') }}</UButton><UButton v-if="canReadIssueTrends(session, workspaceId, projectId)" color="neutral" variant="ghost" type="button" @click="viewTrends(item)">{{ ui('View trends', '查看趋势') }}</UButton><UButton v-if="canWrite && item.allowed_actions.includes('update')" color="neutral" variant="ghost" type="button" :disabled="busy || !!pending || !!conflict" @click="openEditor(item)">{{ ui('Edit', '编辑') }}</UButton><UButton v-if="canWrite && item.allowed_actions.includes('update')" color="neutral" variant="ghost" type="button" :disabled="busy || !!pending || !!conflict" @click="changeStatus(item)">{{ item.status_key === 'open' ? ui('Close milestone', '关闭里程碑') : ui('Reopen milestone', '重新开放') }}</UButton></div>
       </article>
     </div>
     <p v-if="page.loading" role="status">{{ ui('Loading milestones…', '正在加载里程碑…') }}</p><p v-else-if="page.loaded && !page.items.length && !page.error" class="empty-copy">{{ ui('No matching milestones. Issues can be used without milestones.', '暂无匹配的里程碑，事项可以独立使用。') }}</p><UButton v-if="page.cursor || page.error" color="neutral" variant="outline" type="button" :disabled="page.loading" @click="load(!page.cursor)">{{ page.error ? ui('Retry', '重试') : ui('Load more', '加载更多') }}</UButton>

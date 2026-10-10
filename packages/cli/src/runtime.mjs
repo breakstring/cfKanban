@@ -309,6 +309,11 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     await assertGenericCloudflareMutationIsAvailable({home,stateRoot,instanceId:input.instanceId,method:command.method,apiPath:encodePath(command.apiPath,input)});
     if(['planCloudflareWaf','registerCloudflareWafTarget','updateCloudflareSettings','getCloudflareNotifications'].includes(command.operation))throw toolError('CLOUDFLARE_FEATURE_RETIRED','This Cloudflare setup feature is retired; preserve existing rules and recover original operations by their request key',{reason:'cloudflare_feature_retired'});
     if(command.method==='GET') {
+      if(['getProjectIssueTrends','getWorkspaceIssueTrends'].includes(command.operation)) {
+        const meta=await request(identity,{method:'GET',apiPath:'/api/v1/meta'});
+        if(!meta.ok)return meta;
+        if(meta.data?.capabilities?.issue_trends!==true)throw toolError('CLI_ISSUE_TRENDS_UNSUPPORTED','This instance does not advertise Issue trends; do not reconstruct history from Issue lists');
+      }
       if(['listIssues','listIssueCandidates','getSearchIndexStatus'].includes(command.operation)) {
         if(!input.project) {
           const detected=await scopeInspector({directory:input.directory??directory});

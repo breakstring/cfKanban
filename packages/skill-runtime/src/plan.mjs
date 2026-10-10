@@ -1,5 +1,6 @@
 import { normalizePrincipalDisplayName } from "./principal-name.mjs";
 import { ANONYMOUS_LOGIN_POLICY, EXPENSIVE_READ_POLICY } from "./cost-protection-config.mjs";
+import { maintenanceSchedule } from "./maintenance-schedule.mjs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
@@ -142,11 +143,14 @@ export function createStrictZeroPlan({
       "read_migration_checksum_ledger_and_schema_again",
       "validate_worker_bundle_with_wrangler_dry_run",
       "deploy_worker_and_static_assets",
+      ...(release.schema_version >= 29 ? ["read_worker_deployment_and_maintenance_schedule"] : []),
       "bootstrap_owner_from_private_pending_credential",
       "verify_health_discovery_schema_and_me",
       "write_redacted_receipt",
     ],
   };
+  const maintenance = maintenanceSchedule(plan);
+  if (maintenance) plan.maintenance = maintenance;
   return { plan, plan_digest: canonicalDigest(plan) };
 }
 

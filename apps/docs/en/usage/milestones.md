@@ -32,7 +32,7 @@ In the local browser workbench or host workbench, open an Issue and use **Milest
 
 Each explicitly associated, non-deleted Issue counts once. Canceled is separate from done; unfinished includes backlog, todo, and in_progress. A parent and child both associated count separately. Descendants are not included implicitly. Counts measure Issues, not estimated effort.
 
-Archiving the Project pauses content access; restoring it makes milestones available again. Permanently deleting the Project removes its milestones and history under the existing cleanup contract. This version provides progress counts and associated Issues; trend charts are planned separately.
+Archiving the Project pauses content access; restoring it makes milestones available again. Permanently deleting the Project removes its milestones and history under the existing cleanup contract. See [Issue trends](trends.md) for historical milestone scope and completion charts.
 
 ## Terminal and API
 

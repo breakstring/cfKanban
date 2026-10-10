@@ -31,6 +31,9 @@ define("workspaces_list", "Read one bounded page of authorized Workspaces.", { i
 define("projects_list", "Read one bounded page of Projects in one explicit Workspace.", { instance_id: uuid, workspace_id: uuid, ...pagination }, ["instance_id", "workspace_id"]);
 define("projects_get", "Read one explicit Project and its allowed_actions.", projectTarget, Object.keys(projectTarget));
 define("statuses_list", "Read server-defined status names in one explicit Project.", projectTarget, Object.keys(projectTarget));
+const trendDays = { type: "integer", minimum: 1, maximum: 365 };
+define("project_issue_trends", "Read UTC daily Issue stock and creation/completion flows in one explicit Project, optionally one milestone. Default 30 days; null is unavailable history, not zero. Current day is partial. Requires advertised issue_trends support.", { ...projectTarget, days: trendDays, milestone: uuid }, Object.keys(projectTarget));
+define("workspace_issue_trends", "Read UTC daily Issue trends in one explicit Workspace. Optional project_ids narrow current readable Projects and Session scope; return scope and coverage. Default 30 days; null is unavailable history. A bound panel remains confined to its bound Projects.", { instance_id: uuid, workspace_id: uuid, project_ids: array(uuid, 100, 1), days: trendDays }, ["instance_id", "workspace_id"]);
 define("assignees_list", "Read one bounded page of current Project assignees; only public Principal identifiers and names are exposed.", { ...projectTarget, cursor: pagination.cursor, limit: pagination.limit }, Object.keys(projectTarget));
 define("labels_list", "Read one bounded page of existing active labels in one explicit Project. Does not create or manage labels.", { ...projectTarget, cursor: pagination.cursor, limit: pagination.limit }, Object.keys(projectTarget));
 const milestoneFields = { title: text(200), description: { ...text(8192, 0), "x-max-utf8-bytes": 8192 }, due_date: nullable({ ...text(10), pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }), status_key: enumeration(["open", "closed"]) };
@@ -133,8 +136,9 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
   const execute = async (name, args = {}, { signal: callerSignal } = {}, internal = null) => {
     const reference = internal === "reference";
     const searchIndex = internal === "search";
+    const trends = ["cfkanban_project_issue_trends", "cfkanban_workspace_issue_trends"].includes(name);
     const localIdentity = searchIndex && name === "cfkanban_search_identity";
-    const boundedRead = reference || searchIndex;
+    const boundedRead = reference || searchIndex || trends;
     const tool = reference ? referenceTool : searchIndex ? searchIndexTools[name] : MCP_TOOLS.find(item => item.name === name);
     if (!tool) return localFailure("MCP_TOOL_NOT_FOUND");
     if (!validate(tool.inputSchema, args)) return localFailure("MCP_INVALID_ARGUMENTS");
@@ -211,7 +215,7 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
         try {
           const response = await deadline(fetchImpl(new URL(apiPath, origin), { method, headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: "manual", signal }), signal);
           if (response.status >= 300 && response.status < 400) return localFailure("CROSS_ORIGIN_REDIRECT_REJECTED");
-          const bounded = boundedRead ? await boundedResponse(response, signal, searchIndex ? 1_048_576 : 65_536) : response;
+          const bounded = boundedRead ? await boundedResponse(response, signal, searchIndex || trends ? 1_048_576 : 65_536) : response;
           return await deadline(normalizeResponse(bounded), signal);
         } catch (error) {
           if (boundedRead && error?.code) { controller.abort(error); throw error; }
@@ -234,6 +238,7 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
       if (discovery.preferred_api_origin !== origin || discovery.origin_version !== instance.origin_version) throw toolError("DISCOVERY_ORIGIN_MISMATCH", "Verify origin migration through the dedicated Skill");
       if (reference && discovery.capabilities?.issue_reference !== true) throw toolError("MCP_ISSUE_REFERENCE_UNSUPPORTED", "This instance does not advertise lightweight Issue references");
       if (searchIndex && discovery.capabilities?.issue_search_index !== true) throw toolError("MCP_SEARCH_INDEX_UNSUPPORTED", "This instance does not advertise Issue search synchronization");
+      if (trends && discovery.capabilities?.issue_trends !== true) throw toolError("MCP_ISSUE_TRENDS_UNSUPPORTED", "This instance does not advertise Issue trends; history cannot be reconstructed from ordinary Issue lists");
       if (reference || searchIndex || bound || ["cfkanban_connection_inspect", "cfkanban_profile_locale_set"].includes(name)) {
         const me = await request("/api/v1/me");
         if (!me.ok) return redact(me, snapshot.token);
@@ -268,6 +273,15 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
       const projectPath = `/api/v1/workspaces/${input.workspace_id}/projects/${input.project_id}`;
       const write = body => ({ method: "POST", body, idempotencyKey: input.idempotency_key });
       switch (name) {
+        case "cfkanban_project_issue_trends": result = await request(query(`${projectPath}/issues/trends`, pick(input, ["days", "milestone"]))); break;
+        case "cfkanban_workspace_issue_trends": {
+          if (bound) {
+            input.project_ids ??= [...bound.project_ids];
+            input.project_ids.forEach(scopeCheck);
+          }
+          result = await request(query(`/api/v1/workspaces/${input.workspace_id}/issues/trends`, { days: input.days, project: input.project_ids }));
+          break;
+        }
         case "cfkanban_search_status": result = await request(query("/api/v1/search-index/status", { allow_unfiltered: true })); break;
         case "cfkanban_search_snapshot": result = await request(query("/api/v1/search-index/snapshot", { project: input.project_id, ...pick(input, ["cursor", "limit"]) })); break;
         case "cfkanban_search_changes": result = await request(query("/api/v1/search-index/changes", { project: input.project_id, ...pick(input, ["after", "limit"]) })); break;

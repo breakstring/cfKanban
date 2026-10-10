@@ -4,6 +4,7 @@ import { PUBLIC_ACCESS_NAMES } from "./public-access-config.mjs";
 import { verifyPlannedPublicAccess } from "./public-access.mjs";
 import { verifyPlannedWorkerCostSettings } from "./worker-cost-settings.mjs";
 import { verifyPlannedAttachmentWorker, verifyPlannedR2Storage } from "./r2-storage.mjs";
+import { assertMaintenanceDeploymentEvidence, assertMaintenanceSchedule, verifyPlannedMaintenanceSchedule } from "./maintenance-schedule.mjs";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -883,6 +884,7 @@ export async function executeWranglerAction({
     await verifyPlannedPublicAccess({ stateRoot, plan, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
     await verifyPlannedR2Storage({ plan, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
     if (plan.resources?.r2) await verifyPlannedAttachmentWorker({ plan, phase: "before", wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
+    await verifyPlannedMaintenanceSchedule({ plan, phase: "before", wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
   }
   let frozenConfigEvent = null;
   if (configPath !== null) {
@@ -991,6 +993,10 @@ export async function executeWranglerAction({
     ownerBootstrapReadbackSql = buildOwnerBootstrapReadbackSql();
   }
   if (action === "bootstrap_owner" || action === "owner_bootstrap_readback") {
+    if (action === "bootstrap_owner") {
+      assertMaintenanceSchedule(plan);
+      assertMaintenanceDeploymentEvidence(journal, plan);
+    }
     const bootstrapPath = safeAbsolute(bootstrapSqlPath, "bootstrap_sql_path");
     const bootstrapEvent = [...journal.events].reverse().find((event) => event?.type === "owner_bootstrap_sql_written") || null;
     if (bootstrapEvent === null
@@ -1083,6 +1089,8 @@ export async function executeWranglerAction({
   if (result.code === 0 && action === "worker_deployment_readback") {
     try {
       workerDeploymentReadback = parseWorkerDeployment(result.stdout);
+      const maintenance = await verifyPlannedMaintenanceSchedule({ plan, phase: "after", wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
+      if (maintenance) workerDeploymentReadback.maintenance_configuration = maintenance;
       if (deploymentProof || plan.resources?.r2 || plan.usage_analytics || (plan.kind === "deployed_instance_upgrade" && (plan.cost_protection || plan.public_access))) {
         const version = await readWorkerVersionById({ wranglerExecutable: executable, accountId: plan.target.cloudflare_account_id, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.cloudflare_auth_context_directory, workerName: plan.resources.worker.name, versionId: workerDeploymentReadback.version_id, runner, environment: controlEnvironment });
         if (deploymentProof) {

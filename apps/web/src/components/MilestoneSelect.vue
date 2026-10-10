@@ -6,7 +6,7 @@ import { ColumnPagination } from "../lib/column-pagination";
 import { locale } from "../lib/i18n";
 import type { IssueMilestone, ListResult, MilestoneResource } from "../types";
 
-const props = defineProps<{ workspaceId: string; projectId: string; value: string; current?: IssueMilestone | null | undefined; allowAny?: boolean; hideLabel?: boolean; disabled?: boolean; resetKey?: string }>();
+const props = withDefaults(defineProps<{ workspaceId: string; projectId: string; value: string; current?: IssueMilestone | null | undefined; allowAny?: boolean; allowNone?: boolean; hideLabel?: boolean; disabled?: boolean; resetKey?: string }>(), { allowNone: true });
 const emit = defineEmits<{ "update:value": [value: string] }>();
 const page = reactive(new ColumnPagination<MilestoneResource>());
 const menu = ref<HTMLDetailsElement | null>(null);
@@ -83,7 +83,7 @@ function onKeydown(event: KeyboardEvent): void {
     </summary>
     <div class="milestone-options" :aria-label="ui('Choose milestone', '选择里程碑')">
       <button v-if="allowAny" type="button" :disabled="disabled" :aria-pressed="value === 'all'" @click="select('all')">{{ ui('Any milestone', '不限里程碑') }}</button>
-      <button type="button" :disabled="disabled" :aria-pressed="value === 'none'" @click="select('none')">{{ ui('No milestone', '不归属里程碑') }}</button>
+      <button v-if="allowNone !== false" type="button" :disabled="disabled" :aria-pressed="value === 'none'" @click="select('none')">{{ ui('No milestone', '不归属里程碑') }}</button>
       <button v-if="current && !page.items.some(item => item.id === current?.id)" type="button" :disabled="disabled" :aria-pressed="value === current.id" @click="select(current.id)">{{ current.title }} · {{ current.status_key === 'closed' ? ui('Closed', '已关闭') : ui('Open', '开放') }}</button>
       <button v-for="item in page.items" :key="item.id" type="button" :disabled="disabled" :aria-pressed="value === item.id" @click="select(item.id)">{{ item.title }} · {{ item.status_key === 'closed' ? ui('Closed', '已关闭') : ui('Open', '开放') }}</button>
       <p v-if="page.loaded && !page.items.length">{{ ui('No milestones in this project.', '此项目暂无里程碑。') }}</p>

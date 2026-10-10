@@ -1843,6 +1843,22 @@
         "kind": "api",
         "operation": "updateMilestone"
       }
+    },
+    {
+      "command": "issue trends",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getProjectIssueTrends"
+      }
+    },
+    {
+      "command": "workspace issue trends",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getWorkspaceIssueTrends"
+      }
     }
   ],
   "operations": [
@@ -4094,6 +4110,30 @@
           "milestone update"
         ]
       }
+    },
+    {
+      "operation": "getProjectIssueTrends",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/trends",
+      "summary": "Get Project Issue Trends",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue trends"
+        ]
+      }
+    },
+    {
+      "operation": "getWorkspaceIssueTrends",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/issues/trends",
+      "summary": "Get Workspace Issue Trends",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace issue trends"
+        ]
+      }
     }
   ],
   "skill_commands": [
@@ -4823,6 +4863,8 @@
           "project issue list",
           "issue create",
           "issue counts",
+          "issue trends",
+          "workspace issue trends",
           "issue show",
           "issue update",
           "issue delete",

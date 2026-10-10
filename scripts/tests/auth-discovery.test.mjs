@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import docsCatalog from "../../apps/docs/catalog.json" with { type: "json" };
 
 import { fetchWorker } from "../../apps/worker/src/index.ts";
 import { authenticationGuideBody } from "../../apps/worker/src/kernel/auth-documentation.ts";
@@ -91,5 +92,8 @@ test("API catalog and robots expose the real auth guide while sitemap stays HTML
   assert(!robots.includes("Allow: /auth.md/"));
   const sitemap = await (await request("/sitemap.xml")).text();
   assert(!sitemap.includes("auth.md"));
-  assert.equal([...sitemap.matchAll(/<loc>/gu)].length, 81);
+  const publicHtmlPaths = new Set(["/", ...docsCatalog.flatMap(group => group.pages.flatMap(page => (
+    ["en", "zh-CN"].map(locale => `/docs/${locale}/${page.path.replace(/\/index$/u, "/")}`)
+  )))]);
+  assert.equal([...sitemap.matchAll(/<loc>/gu)].length, publicHtmlPaths.size);
 });

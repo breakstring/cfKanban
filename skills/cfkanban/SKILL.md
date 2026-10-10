@@ -1,6 +1,6 @@
 ---
 name: cfkanban
-description: Find, create, and update cfKanban Issues, Project milestones, Comments, relations, and completion records; manage optional Issue milestone membership, join Projects, and open authenticated workbenches. Use for daily collaboration and your profile, not scoped administration or Cloudflare deployment.
+description: Read Issue trends; find, create, and update cfKanban Issues, Project milestones, Comments, relations, and completion records; manage optional Issue milestone membership, join Projects, and open authenticated workbenches. Use for daily collaboration and your profile, not scoped administration or Cloudflare deployment.
 ---
 
 # cfKanban
@@ -17,7 +17,7 @@ For an already joined user, lead with finding, creating, editing, changing statu
 
 ## Choose the execution path
 
-For daily operations, prefer the current host's exposed, connected cfKanban MCP when its exact schema covers the requested semantics. Discover the available tools and inspect their schemas first; use the host-returned names and namespaces, not invented tool calls. The current adapter has 24 bounded tools for connection and Project discovery, self locale preferences, Issue lists/read/create/update/complete and label add/remove, Project labels and milestones, Comments, and relations. Read the coverage guide in [English](references/workflows.md#execution-choice-and-mcp-coverage) or [简体中文](references/workflows.zh-CN.md#执行选择与-mcp-覆盖) only when selecting a tool or checking a gap.
+For daily operations, prefer the current host's exposed, connected cfKanban MCP when its exact schema covers the requested semantics. Discover the available tools and inspect their schemas first; use the host-returned names and namespaces, not invented tool calls. The current adapter has 26 bounded tools for connection and Project discovery, self locale preferences, Issue lists/read/create/update/complete and label add/remove, Project and Workspace trends, Project labels and milestones, Comments, and relations. Read the coverage guide in [English](references/workflows.md#execution-choice-and-mcp-coverage) or [简体中文](references/workflows.zh-CN.md#执行选择与-mcp-覆盖) only when selecting a tool or checking a gap.
 
 Use discovered `cfkanban_connection_inspect` to inspect non-secret candidates or verify the explicitly selected instance and live Principal. It does not choose an instance for you. Reuse unchanged verified identity/scope evidence in the current task; honor any Host binding and resolve ambiguity before reading or writing. A scoped MCP read does not first require shell `help`, `capabilities`, or directory probes.
 
@@ -136,6 +136,10 @@ A Project can have zero or several milestones. Issue membership is optional and 
 Issue creation/update accepts `milestone_id` (UUID or null to remove); list/counts/candidates accept `milestone` (UUID or `none`). Read current Issue version before changing membership. Progress counts explicitly associated, non-deleted Issues and separates canceled from done. Read the Project milestones section of the workflow reference for examples and pagination.
 
 The local browser and host workbenches show current membership in Issue details. Writers can choose, change or remove it using paginated candidates, including closed milestones; readers can view it. Workbench membership uses its verified Project binding and existing write recovery. Create or maintain milestones through the full Web app, CLI or discovered business MCP tools. If an older Service omits milestone support, the workbench keeps ordinary Issue details available and hides this control; source Skill updates do not update an installed bundle or Service.
+
+## Issue trends
+
+Use discovered `cfkanban_project_issue_trends` / `cfkanban_workspace_issue_trends`, or public CLI `issue trends` / `workspace issue trends`, for authorized daily trends. Confirm returned scope and coverage; unavailable values are null, never zero. Read [English](references/workflows.md#issue-trends) or [简体中文](references/workflows.zh-CN.md#issue-趋势) for stock, flow, dates and milestone semantics. Missing `issue_trends` capability means unsupported; do not reconstruct history from ordinary Issue pages.
 
 ## Issue priority requests
 

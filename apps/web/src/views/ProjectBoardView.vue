@@ -28,6 +28,7 @@ import {
 } from "../lib/cas-recovery";
 import { projectInventoryBoundary, sessionCanWriteProject } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
+import { canReadIssueTrends } from "../lib/issue-trends";
 import { statusDisplayName } from "../lib/status-display";
 import { lazyPage } from "../lib/lazy-page";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
@@ -145,6 +146,9 @@ function openProjectSettings(): void {
 }
 function openMilestones(): void {
   navigate(`/app/w/${encodeURIComponent(props.workspaceId)}/p/${encodeURIComponent(props.projectId)}/milestones?${new URLSearchParams({ from: returnPath.value })}`, false, returnPath.value);
+}
+function openTrends(): void {
+  navigate(`/app/w/${encodeURIComponent(props.workspaceId)}/p/${encodeURIComponent(props.projectId)}/trends?${new URLSearchParams({ from: returnPath.value })}`, false, returnPath.value);
 }
 let casRecoveryGeneration = 0;
 let casReadback: (() => Promise<void>) | null = null;
@@ -815,6 +819,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
             <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'board' }" :aria-pressed="viewMode === 'board'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('board')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ locale === 'zh-CN' ? '看板' : 'Board' }}</button>
             <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'list' }" :aria-pressed="viewMode === 'list'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('list')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4h10M7 10h10M7 16h10M3 4h.01M3 10h.01M3 16h.01" /></svg>{{ locale === 'zh-CN' ? '列表' : 'List' }}</button>
             <button type="button" class="board-view-label board-view-inactive" :disabled="saving.size > 0 || hasPendingWrites" @click="openMilestones">{{ locale === 'zh-CN' ? '里程碑' : 'Milestones' }}</button>
+            <button v-if="canReadIssueTrends(session, workspaceId, projectId)" type="button" class="board-view-label board-view-inactive" :disabled="saving.size > 0 || hasPendingWrites" @click="openTrends">{{ locale === 'zh-CN' ? '趋势' : 'Trends' }}</button>
           </div>
         </div>
         <ProjectSearch v-model="search" :issues="searchIssues" :project-id="projectId" :applied-search="appliedSearch" :disabled="loading || saving.size > 0 || hasPendingWrites" :reset-key="`${workspaceId}:${projectId}:${session.principal.id}:${session.session_id}`" @search="submitProjectSearch" @open="openListIssue" />

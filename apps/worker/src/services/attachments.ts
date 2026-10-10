@@ -349,24 +349,25 @@ export interface AttachmentCleanupResult {
   backlog: { garbage: boolean; expired_pending_may_remain: boolean };
 }
 
-export async function collectAttachmentGarbage(env: WorkerEnv, now = Date.now()): Promise<AttachmentCleanupResult> {
+export async function collectAttachmentGarbage(env: WorkerEnv, now = Date.now(), batchLimit = ATTACHMENT_CLEANUP_BATCH, deadline = Infinity): Promise<AttachmentCleanupResult> {
+  if (!Number.isSafeInteger(batchLimit) || batchLimit < 1 || batchLimit > ATTACHMENT_CLEANUP_BATCH) throw new RangeError("invalid attachment cleanup bound");
   const result: AttachmentCleanupResult = {
     checked: 0, deleted: 0, budget_released: 0,
     failures: { delete: 0, verify: 0, release: 0 }, backlog: { garbage: false, expired_pending_may_remain: false },
   };
-  if (env.ATTACHMENTS === undefined) return result;
+  if (env.ATTACHMENTS === undefined || Date.now() >= deadline) return result;
   const db = env.DB, bucket = env.ATTACHMENTS;
   // 在途 PUT 可能晚于 DELETE 完成，因此永久保留对象墓碑；即使预算已释放，
   // 后续轮询仍能再次删除同一个 key，避免留下无法追踪的对象。
   const expired = await db.prepare(`UPDATE attachment_objects SET state='garbage',garbage_at=?1
-    WHERE id IN (SELECT id FROM attachment_objects WHERE state='pending' AND expires_at<=?1 ORDER BY expires_at,id LIMIT ?2)`).bind(now, ATTACHMENT_CLEANUP_BATCH).run();
-  result.backlog.expired_pending_may_remain = expired.meta.changes === ATTACHMENT_CLEANUP_BATCH;
+    WHERE id IN (SELECT id FROM attachment_objects WHERE state='pending' AND expires_at<=?1 ORDER BY expires_at,id LIMIT ?2)`).bind(now, batchLimit).run();
+  result.backlog.expired_pending_may_remain = expired.meta.changes === batchLimit;
   // garbage 状态的 CHECK 保证 garbage_at 非空；新垃圾按进入时间排队，
   // 避免持续的新记录饿死已检查墓碑，使晚到 PUT 永久留在预算之外。
   const selected = (await db.prepare(`SELECT id,object_key,budget_released_at FROM attachment_objects WHERE state='garbage'
-    ORDER BY COALESCE(last_checked_at,garbage_at),id LIMIT ?1`).bind(ATTACHMENT_CLEANUP_BATCH + 1).all<{ id: string; object_key: string; budget_released_at: number | null }>()).results;
-  result.backlog.garbage = selected.length > ATTACHMENT_CLEANUP_BATCH;
-  const candidates = selected.slice(0, ATTACHMENT_CLEANUP_BATCH);
+    ORDER BY COALESCE(last_checked_at,garbage_at),id LIMIT ?1`).bind(batchLimit + 1).all<{ id: string; object_key: string; budget_released_at: number | null }>()).results;
+  result.backlog.garbage = selected.length > batchLimit;
+  const candidates = selected.slice(0, batchLimit);
   result.checked = candidates.length;
   if (candidates.length > 0) {
     // 检查失败也推进 FIFO 回访时间；同轮候选共享时间戳，可一次写入有界集合。
@@ -376,6 +377,7 @@ export async function collectAttachmentGarbage(env: WorkerEnv, now = Date.now())
   }
   const releasable: string[] = [];
   for (const object of candidates) {
+    if (Date.now() >= deadline) { result.backlog.garbage = true; break; }
     try {
       await bucket.delete(object.object_key);
     } catch { result.failures.delete += 1; continue; }

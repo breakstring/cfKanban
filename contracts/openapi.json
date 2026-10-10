@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.12.0-rc.6",
+    "version": "1.12.0-rc.7",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -5529,6 +5529,218 @@
         },
         "x-cfkanban-write-contract": "read",
         "x-cfkanban-permission": "project_reader"
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/trends": {
+      "get": {
+        "operationId": "getProjectIssueTrends",
+        "tags": [
+          "issues"
+        ],
+        "summary": "Get Project Issue Trends",
+        "description": "Read UTC daily Issue stock and flow in the exact returned scope under current Project authorization and Session scope. Parent and child Issues count independently. Stock excludes soft-deleted Issues; unfinished is backlog, todo and in_progress, with canceled separate from done. Flow counts original creation and transitions into done; completing again after reopening counts again. Restore and milestone membership changes are not creation or completion. The current day is partial through observed_at. Persisted history is backfilled where recoverable; unknown stock or flow is null, never fabricated zero. projects reports separate stock_from/flow_from and pending/complete/partial coverage. Workspace aggregate values are null when any included Project lacks that metric's coverage. Archived Projects are excluded and purged Projects cannot be recovered. No pagination or ordinary Issue filters are accepted; unknown parameters are rejected. Requires issue_trends capability; clients must not scan Issue lists to reconstruct history.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 365,
+              "default": 30
+            },
+            "description": "UTC calendar days including the unfinished current day. Only one days parameter is accepted."
+          },
+          {
+            "name": "milestone",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "Optional single milestone in this Project. Historical scope follows membership on each day; not the current membership applied retrospectively."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueTrendsResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_reader",
+        "x-cfkanban-additional-query-parameters": false
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/issues/trends": {
+      "get": {
+        "operationId": "getWorkspaceIssueTrends",
+        "tags": [
+          "issues"
+        ],
+        "summary": "Get Workspace Issue Trends",
+        "description": "Read UTC daily Issue stock and flow in the exact returned scope under current Project authorization and Session scope. Parent and child Issues count independently. Stock excludes soft-deleted Issues; unfinished is backlog, todo and in_progress, with canceled separate from done. Flow counts original creation and transitions into done; completing again after reopening counts again. Restore and milestone membership changes are not creation or completion. The current day is partial through observed_at. Persisted history is backfilled where recoverable; unknown stock or flow is null, never fabricated zero. projects reports separate stock_from/flow_from and pending/complete/partial coverage. Workspace aggregate values are null when any included Project lacks that metric's coverage. Archived Projects are excluded and purged Projects cannot be recovered. No pagination or ordinary Issue filters are accepted; unknown parameters are rejected. Requires issue_trends capability; clients must not scan Issue lists to reconstruct history.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 365,
+              "default": 30
+            },
+            "description": "UTC calendar days including the unfinished current day. Only one days parameter is accepted."
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 100,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Optional repeated exact Project UUIDs in this Workspace. Omission uses currently readable active Projects intersected with the authenticated Session scope. Explicit inaccessible targets are rejected."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueTrendsResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_reader",
+        "x-cfkanban-additional-query-parameters": false
       }
     },
     "/api/v1/issues/{identifier}": {
@@ -20883,6 +21095,9 @@
               "project_milestones": {
                 "type": "boolean"
               },
+              "issue_trends": {
+                "type": "boolean"
+              },
               "attachments": {
                 "type": "boolean"
               },
@@ -20955,6 +21170,10 @@
           "capabilities": {
             "type": "object",
             "properties": {
+              "issue_trends": {
+                "type": "boolean",
+                "description": "True when authorized UTC Project, Workspace and milestone Issue trends are supported; missing or false is unsupported."
+              },
               "project_milestones": {
                 "type": "boolean",
                 "description": "True when optional Project milestones and Issue membership are supported."
@@ -22390,6 +22609,239 @@
           },
           "resolved_scope": {
             "$ref": "#/components/schemas/IssueResolvedScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueTrendPoint": {
+        "type": "object",
+        "required": [
+          "date",
+          "total",
+          "done",
+          "canceled",
+          "unfinished",
+          "created",
+          "completed",
+          "reopened"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "done": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "canceled": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unfinished": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reopened": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueTrendsResult": {
+        "type": "object",
+        "required": [
+          "timezone",
+          "from_date",
+          "to_date",
+          "observed_at",
+          "scope",
+          "projects",
+          "points"
+        ],
+        "properties": {
+          "timezone": {
+            "const": "UTC"
+          },
+          "from_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "to_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "observed_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "scope": {
+            "type": "object",
+            "required": [
+              "workspace_id",
+              "project_ids",
+              "milestone_id"
+            ],
+            "properties": {
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "project_ids": {
+                "type": "array",
+                "maxItems": 100,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/components/schemas/Uuid"
+                }
+              },
+              "milestone_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "projects": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "display_name",
+                "stock_from",
+                "flow_from",
+                "history_state"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "stock_from": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "flow_from": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "history_state": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "complete",
+                    "partial"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "points": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 365,
+            "items": {
+              "$ref": "#/components/schemas/IssueTrendPoint"
+            }
           }
         },
         "additionalProperties": false

@@ -212,6 +212,9 @@ export async function finalizeInstanceUpgrade({
     throw toolError("WORKER_DEPLOYMENT_READBACK_REQUIRED", "Upgrade finalization requires a successful post-deploy Worker readback");
   }
   const afterWorker = workerReadback.event.worker_deployment_readback;
+  if (plan.maintenance && canonicalDigest(afterWorker.maintenance_configuration ?? null) !== canonicalDigest({ crons: plan.maintenance.crons, verified: true })) {
+    throw toolError("MAINTENANCE_READBACK_REQUIRED", "Upgrade finalization requires the exact maintenance schedule readback");
+  }
   if (plan.current?.provenance === "remote_observed") {
     const attempt = findDeploymentAttempt(journal, plan, configEvent.config_digest);
     if (!attempt || !afterWorker.deployment_proof

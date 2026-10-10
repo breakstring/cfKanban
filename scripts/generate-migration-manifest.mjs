@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 28,
+  schema_version: 29,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -340,6 +340,17 @@ const manifest = {
         triggers: ["issue_milestone_project_insert", "issue_milestone_project_update", "milestone_progress_insert", "milestone_progress_update", "milestone_progress_delete"],
       },
       expected_data: { instance_meta_schema_version_at_least: 28, allow_uninitialized: true },
+    },
+    {
+      sequence: 29, name: "0029_issue_trends.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0029_issue_trends.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        tables: ["issue_trend_projects", "issue_trend_totals", "issue_trend_days", "issue_trend_states", "issue_trend_backfill"],
+        indexes: ["idx_issue_trend_states_project", "idx_issue_trend_backfill_project", "idx_events_issue_trend_history"],
+        triggers: ["issue_trend_project_insert", "issue_trend_milestone_insert", "issue_trend_event"],
+      },
+      expected_data: { instance_meta_schema_version_at_least: 29, allow_uninitialized: true },
     },
   ],
 };

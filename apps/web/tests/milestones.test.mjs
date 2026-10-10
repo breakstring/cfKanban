@@ -181,6 +181,19 @@ test("selector unregisters the captured document listener even when the global d
   assert.equal(f.listeners.size, 0);
 });
 
+test("fixed Issue sessions have no project or milestone trend actions", async () => {
+  setLocale("en");
+  setHandler(pathname => pathname.includes("/milestones") ? list([milestone()]) : projectResource);
+  const fixed = { ...session("reader"), target: { kind: "issue" } };
+  const f = fixture(MilestonesView, { workspaceId: workspace, projectId: project, session: fixed });
+  try {
+    await f.tick();
+    assert.equal(f.button("Trends"), undefined);
+    assert.equal(f.button("View trends"), undefined);
+    assert.equal(requests.some(item => item.path.includes("/issues/trends")), false);
+  } finally { f.app.unmount(); }
+});
+
 test("project milestones render server progress and browse Issues with the milestone filter", async () => {
   setHandler(async pathname => pathname.includes("/milestones?") ? list([milestone()]) : projectResource);
   destinations.length = 0;

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from "vue";
 
-import AppFooter from "./components/AppFooter.vue";
 import ErrorNotice from "./components/ErrorNotice.vue";
 import LocaleSwitch from "./components/LocaleSwitch.vue";
 import PageState from "./components/PageState.vue";
@@ -23,6 +22,7 @@ import type { InstanceDiscovery, Locale, PrincipalResource, WriteResult } from "
 import type { WebSessionView } from "./types";
 
 const UApp = lazyPage(() => import("./components/LocalizedApp.vue"));
+const AppFooter = defineAsyncComponent(() => import("./components/AppFooter.vue"));
 const SessionDraftsPanel = defineAsyncComponent(() => import("./components/SessionDraftsPanel.vue"));
 const AppHeader = lazyPage(() => import("./components/AppHeader.vue"));
 const IssueDetailView = lazyPage(() => import("./views/IssueDetailView.vue"));
@@ -33,11 +33,18 @@ const ProjectActivityView = lazyPage(() => import("./views/ProjectActivityView.v
 const ProjectDeletedIssuesView = lazyPage(() => import("./views/ProjectDeletedIssuesView.vue"));
 const ProjectLabelsView = lazyPage(() => import("./views/ProjectLabelsView.vue"));
 const ProjectMilestonesView = lazyPage(() => import("./views/ProjectMilestonesView.vue"));
+const IssueTrendsView = lazyPage(() => import("./views/IssueTrendsView.vue"));
 const ProjectBoardView = lazyPage(() => import("./views/ProjectBoardView.vue"));
 const WorkListView = lazyPage(() => import("./views/WorkListView.vue"));
 const ProjectSelectionView = lazyPage(() => import("./views/ProjectSelectionView.vue"));
 const PublicHomeView = lazyPage(() => import("./views/PublicHomeView.vue"));
 const ScopedManagementView = lazyPage(() => import("./views/ScopedManagementView.vue"));
+const authenticatedPages = {
+  selection: ProjectSelectionView, work: WorkListView, project: ProjectBoardView,
+  labels: ProjectLabelsView, milestones: ProjectMilestonesView, trends: IssueTrendsView,
+  activity: ProjectActivityView, deleted: ProjectDeletedIssuesView, issue: IssueDetailView,
+  profile: ProfileView, notifications: NotificationsView, manage: ScopedManagementView, owner: OwnerView,
+};
 
 type OwnerSection = "overview" | "usage" | "settings" | "cloudflare" | "workspaces" | "access" | "invitations" | "audit" | "archive" | "updates";
 type AppRoute =
@@ -47,6 +54,7 @@ type AppRoute =
   | { kind: "owner"; section: OwnerSection }
   | { kind: "profile" | "notifications" }
   | { kind: "project" | "labels" | "activity" | "deleted" | "milestones"; projectId: string; workspaceId: string }
+  | { kind: "trends"; workspaceId: string; projectId?: string }
   | { kind: "manage"; workspaceId: string; projectId?: string }
   | { kind: "unknown" };
 
@@ -119,12 +127,12 @@ const route = computed<AppRoute>(() => {
       : "overview";
     return { kind: "owner", section };
   }
-  const project = /^\/app\/w\/([^/]+)\/p\/([^/]+)(?:\/(labels|activity|deleted|milestones))?$/.exec(path);
+  const project = /^\/app\/w\/([^/]+)(?:\/p\/([^/]+)(?:\/(labels|activity|deleted|milestones|trends))?|\/(trends))$/.exec(path);
   if (project !== null) {
     const workspaceId = decoded(project[1] ?? "");
-    const projectId = decoded(project[2] ?? "");
-    const section = project[3] as "labels" | "activity" | "deleted" | "milestones" | undefined;
-    if (workspaceId !== null && projectId !== null) return { kind: section ?? "project", projectId, workspaceId };
+    const projectId = project[2] === undefined ? undefined : decoded(project[2]);
+    const section = project[3] as "labels" | "activity" | "deleted" | "milestones" | "trends" | undefined;
+    if (workspaceId !== null && projectId !== null) return projectId === undefined ? { kind: "trends", workspaceId } : { kind: section ?? "project", projectId, workspaceId };
   }
   const issue = /^\/app\/issues\/(CFK-[1-9][0-9]*)$/.exec(path);
   if (issue !== null) return { identifier: issue[1] ?? "", kind: "issue" };
@@ -132,6 +140,7 @@ const route = computed<AppRoute>(() => {
 });
 
 const authenticatedRoute = computed(() => route.value.kind !== "home");
+const headerContext = computed(() => "workspaceId" in route.value ? route.value : context.value);
 watch(session, value => {
   setNotificationSession(value);
   setSessionDraftPrincipal(value?.principal.id ?? null);
@@ -141,19 +150,8 @@ watch(session, value => {
 watch([route, session], ([currentRoute, verifiedSession]) => {
   if (verifiedSession === null || currentRoute.kind === "home") return;
   void AppHeader.preload().catch(() => {});
-  const page = currentRoute.kind === "selection" ? ProjectSelectionView
-    : currentRoute.kind === "work" ? WorkListView
-    : currentRoute.kind === "project" ? ProjectBoardView
-    : currentRoute.kind === "labels" ? ProjectLabelsView
-    : currentRoute.kind === "milestones" ? ProjectMilestonesView
-    : currentRoute.kind === "activity" ? ProjectActivityView
-    : currentRoute.kind === "deleted" ? ProjectDeletedIssuesView
-    : currentRoute.kind === "issue" ? IssueDetailView
-    : currentRoute.kind === "profile" ? ProfileView
-    : currentRoute.kind === "notifications" ? NotificationsView
-    : currentRoute.kind === "manage" ? ScopedManagementView
-    : currentRoute.kind === "owner" && canAccessOwnerControlPlane(verifiedSession) ? OwnerView
-    : null;
+  if (currentRoute.kind === "owner" && !canAccessOwnerControlPlane(verifiedSession)) return;
+  const page = authenticatedPages[currentRoute.kind as keyof typeof authenticatedPages];
   void page?.preload().catch(() => {});
 }, { immediate: true });
 
@@ -411,8 +409,8 @@ watch(currentPath, () => {
       :session="session"
       :locale-busy="localeBusy"
       :locale-retry="!!pendingLocaleSave"
-      :project-id="route.kind === 'project' || route.kind === 'labels' || route.kind === 'activity' || route.kind === 'deleted' || route.kind === 'milestones' ? route.projectId : context?.projectId"
-      :workspace-id="route.kind === 'project' || route.kind === 'labels' || route.kind === 'activity' || route.kind === 'deleted' || route.kind === 'milestones' ? route.workspaceId : context?.workspaceId"
+      :project-id="headerContext?.projectId"
+      :workspace-id="headerContext?.workspaceId"
       @verified="acceptVerifiedSession"
       @logout="logout"
       @locale="changeLocale"
@@ -451,6 +449,7 @@ watch(currentPath, () => {
       />
       <ProjectLabelsView v-else-if="route.kind === 'labels'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" @context="context = $event" />
       <ProjectMilestonesView v-else-if="route.kind === 'milestones'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" @context="context = $event" />
+      <IssueTrendsView v-else-if="route.kind === 'trends'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" @context="context = $event" />
       <ProjectActivityView v-else-if="route.kind === 'activity'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" :return-to="boardReturnPath(route.workspaceId, route.projectId, currentPath.split('?').slice(1).join('?'))" @navigate="navigate" @context="context = $event" />
       <ProjectDeletedIssuesView v-else-if="route.kind === 'deleted'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" :return-to="boardReturnPath(route.workspaceId, route.projectId, currentPath.split('?').slice(1).join('?'))" @navigate="navigate" @context="context = $event" />
       <IssueDetailView

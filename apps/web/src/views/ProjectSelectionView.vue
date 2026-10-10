@@ -7,6 +7,7 @@ import { apiRequest } from "../lib/api";
 import { hasManagementActions, managedWorkspaceIds, managementPath, projectDisplayRole, projectRoleLabel } from "../lib/scoped-management";
 import { containerChoiceLabels } from "../lib/container-choice";
 import { locale, t } from "../lib/i18n";
+import { canReadIssueTrends } from "../lib/issue-trends";
 import { navigate } from "../lib/router";
 import type { ContainerResource, ProjectScopeItem, WebSessionView } from "../types";
 
@@ -32,6 +33,8 @@ async function loadManagement(): Promise<void> {
 }
 
 const choiceLabels = computed(() => containerChoiceLabels(choices.value.map((choice) => ({ id: choice.projectId, name: choice.displayName, workspaceName: choice.workspaceName }))));
+const trendWorkspaces = computed(() => [...new Map(choices.value.filter(choice => canReadIssueTrends(props.session, choice.workspaceId)).map(choice => [choice.workspaceId, { id: choice.workspaceId, name: choice.workspaceName }])).values()]);
+const workspaceLabels = computed(() => containerChoiceLabels(trendWorkspaces.value));
 const loading = ref(true);
 const error = ref("");
 
@@ -63,6 +66,10 @@ watch(() => props.session.allowed_scope.projects, load, { deep: true });
       <UButton color="neutral" variant="ghost" class="text-button" type="button" @click="navigate('/app/work')">{{ locale === "zh-CN" ? "跨项目工作清单" : "Work across selected projects" }} →</UButton>
     </header>
     <PageState :loading="loading" :error="error" :action-label="t('action.refresh')" @retry="load" />
+    <section v-if="trendWorkspaces.length" class="selection-list">
+      <h2>{{ locale === 'zh-CN' ? '工作区趋势' : 'Workspace trends' }}</h2>
+      <UButton v-for="workspace in trendWorkspaces" :key="workspace.id" color="neutral" variant="ghost" class="selection-row" type="button" :title="workspaceLabels.get(workspace.id)?.title" @click="navigate(`/app/w/${encodeURIComponent(workspace.id)}/trends`)"><strong>{{ workspaceLabels.get(workspace.id)?.label }}</strong><span>{{ locale === 'zh-CN' ? '查看当前可访问项目的趋势' : 'View trends across accessible projects' }} →</span></UButton>
+    </section>
     <section v-if="managedWorkspaces.length" class="selection-list">
       <h2>{{ locale === 'zh-CN' ? '工作区管理' : 'Workspace management' }}</h2>
       <UButton color="neutral" variant="ghost" v-for="workspace in managedWorkspaces" :key="workspace.id" class="selection-row" type="button" @click="navigate(managementPath(workspace.id))"><strong>{{ workspace.display_name }}</strong><span>{{ locale === 'zh-CN' ? '管理工作区和项目' : 'Manage workspace and projects' }}</span></UButton>

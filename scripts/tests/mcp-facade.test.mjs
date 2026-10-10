@@ -27,8 +27,8 @@ function fixtureFetch(fixture, handler) {
 const digest = options => createHash("sha256").update(new Headers(options.headers).get("authorization").slice(7)).digest("hex");
 
 test("catalog exposes only bounded strict daily tools and rejects API/state/file passthrough", async () => {
-  assert.equal(MCP_TOOLS.length, 24);
-  assert.equal(new Set(MCP_TOOLS.map(tool => tool.name)).size, 24);
+  assert.equal(MCP_TOOLS.length, 26);
+  assert.equal(new Set(MCP_TOOLS.map(tool => tool.name)).size, 26);
   assert.ok(MCP_TOOLS.every(tool => /^cfkanban_[a-z_]+$/.test(tool.name) && tool.inputSchema.additionalProperties === false));
   assert.ok(MCP_TOOLS.every(tool => !tool.inputSchema.properties.apiPath && !tool.inputSchema.properties.stateRoot));
   const facade = createMcpFacade({ fetchImpl: () => { throw new Error("Should not reach network"); } });

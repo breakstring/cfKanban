@@ -174,7 +174,7 @@ async function queryVisibleProjects(
   auth: AuthContext,
   includeEffectiveDeleted = false,
   currentAuthAt: number | null = null,
-  projectScope?: { projectId: string; workspaceId: string },
+  projectScope?: { projectId?: string; workspaceId: string; limit?: number },
 ): Promise<VisibleProject[]> {
   const target = fixedTarget(auth);
   if (target?.invalid === true) return [];
@@ -192,7 +192,8 @@ async function queryVisibleProjects(
     )`);
   }
   if (projectScope !== undefined) {
-    predicates.push(`p.id = ${bind(projectScope.projectId)}`, `w.id = ${bind(projectScope.workspaceId)}`);
+    if (projectScope.projectId !== undefined) predicates.push(`p.id = ${bind(projectScope.projectId)}`);
+    predicates.push(`w.id = ${bind(projectScope.workspaceId)}`);
   }
   if (currentAuthAt !== null) {
     const currentAuth = buildCurrentAuthGuard(auth, currentAuthAt, values.length + 1);
@@ -208,7 +209,7 @@ async function queryVisibleProjects(
        JOIN projects AS p ON p.id = pg.project_id`}
        JOIN workspaces AS w ON w.id = p.workspace_id
        WHERE ${predicates.join(" AND ")}
-       ORDER BY w.id, p.id`,
+       ORDER BY w.id, p.id ${projectScope?.limit === undefined ? "" : `LIMIT ${bind(projectScope.limit)}`}`,
     ).bind(...values).all<VisibleProjectRow>();
     if (currentAuthAt !== null && result.results.length === 0) {
       await verifyCurrentAuth(db, auth, currentAuthAt);
@@ -235,6 +236,51 @@ export async function resolveCurrentVisibleProjects(
   includeEffectiveDeleted = false,
 ): Promise<VisibleProject[]> {
   return queryVisibleProjects(db, auth, includeEffectiveDeleted, now);
+}
+
+// 趋势按单 Project 查权限；这些源与 effective_project_grants 的 reader/writer 语义一致。
+export function currentProjectRoleSql(principalParameter: string): string {
+  if (!/^\?[1-9][0-9]*$/.test(principalParameter)) throw new RangeError("invalid permission SQL parameter");
+  return `CASE WHEN EXISTS (SELECT 1 FROM scoped_administrator_grants a
+      WHERE a.workspace_id=p.workspace_id AND a.principal_id=${principalParameter} AND a.project_id IS NULL AND a.revoked_at IS NULL)
+    OR EXISTS (SELECT 1 FROM scoped_administrator_grants a
+      WHERE a.project_id=p.id AND a.principal_id=${principalParameter} AND a.project_id IS NOT NULL AND a.revoked_at IS NULL)
+    THEN 'writer' ELSE (SELECT g.role FROM project_grants g
+      WHERE g.project_id=p.id AND g.principal_id=${principalParameter} AND g.revoked_at IS NULL LIMIT 1) END`;
+}
+
+export async function resolveCurrentWorkspaceProjects(
+  db: D1Database,
+  auth: AuthContext,
+  workspaceId: string,
+  now: number,
+  projectIds?: readonly string[],
+): Promise<VisibleProject[]> {
+  const target = fixedTarget(auth);
+  if (target?.invalid === true) return [];
+  const values: BindValue[] = [workspaceId];
+  const bind = (value: BindValue) => { values.push(value); return parameter(values.length); };
+  const predicates = ["p.workspace_id=?1", "p.deleted_at IS NULL", "p.purged_at IS NULL", "w.deleted_at IS NULL", "w.purged_at IS NULL"];
+  // Workspace Project 候选驱动逐项授权，避免先展开 Principal 跨实例的窗口视图。
+  const source = projectIds === undefined
+    ? "FROM projects p INDEXED BY idx_projects_workspace_purge_state"
+    : `FROM json_each(${bind(JSON.stringify(projectIds))}) selected CROSS JOIN projects p ON p.id=selected.value`;
+  if (target?.workspaceId != null) predicates.push(`p.workspace_id=${bind(target.workspaceId)}`);
+  if (target?.projectId != null) predicates.push(`p.id=${bind(target.projectId)}`);
+  if (target?.issueNumber != null) predicates.push(`p.id=(SELECT project_id FROM issues WHERE number=${bind(target.issueNumber)} AND deleted_at IS NULL)`);
+  const principal = auth.isOwner ? null : bind(auth.principalId);
+  const role = auth.isOwner ? "'owner'" : currentProjectRoleSql(principal!);
+  if (!auth.isOwner) predicates.push(`${role} IS NOT NULL`);
+  const guard = buildCurrentAuthGuard(auth, now, values.length + 1);
+  predicates.push(guard.sql); values.push(...guard.values);
+  try {
+    const result = await db.prepare(`SELECT p.id AS project_id,p.display_name AS project_name,p.version AS project_version,
+      w.id AS workspace_id,w.display_name AS workspace_name,${role} AS role
+      ${source} JOIN workspaces w ON w.id=p.workspace_id WHERE ${predicates.join(" AND ")} ORDER BY p.id LIMIT 101`)
+      .bind(...values).all<VisibleProjectRow>();
+    if (result.results.length === 0) await verifyCurrentAuth(db, auth, now);
+    return result.results.map(mapVisibleProject);
+  } catch (error) { if (error instanceof ApiError) throw error; throw platformUnavailable("d1", error); }
 }
 
 export async function requireProjectAuthorization(

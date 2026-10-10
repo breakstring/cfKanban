@@ -5,6 +5,7 @@ import ProjectSwitcherMenu from "./ProjectSwitcherMenu.vue";
 import { apiRequest } from "../lib/api";
 import { containerChoiceLabels } from "../lib/container-choice";
 import { locale } from "../lib/i18n";
+import { canReadIssueTrends } from "../lib/issue-trends";
 import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor } from "../lib/pagination";
 import { groupProjects } from "../lib/project-navigation";
@@ -86,12 +87,15 @@ function manage(workspace: string): void {
   const from = currentProject.value ? `/app/w/${currentProject.value.workspace_id}/p/${currentProject.value.project_id}` : null;
   if (navigate(`${managementPath(workspace)}${from ? `&from=${encodeURIComponent(from)}` : ""}`)) close();
 }
+function workspaceTrends(workspace: string): void {
+  if (navigate(`/app/w/${encodeURIComponent(workspace)}/trends`)) close();
+}
 watch(() => props.session, value => { if (verified.value) verified.value = value; }, { deep: true });
 onUnmounted(() => { generation += 1; });
 </script>
 
 <template>
   <ProjectSwitcherMenu :title="title" :opened="opened" :search="search" :groups="menuGroups" :busy="busy" :error="error" @open="open" @close="close" @search="search = $event" @retry="refresh" @select="selectProject">
-    <template #group-action="{ group }"><UButton color="neutral" variant="ghost" v-if="groups.find(item => item.id === group.id)?.canManage" class="text-button" type="button" @click.stop="manage(group.id)">{{ ui("Manage workspace", "管理工作区") }} →</UButton></template>
+    <template #group-action="{ group }"><UButton v-if="canReadIssueTrends(verified ?? session, group.id)" color="neutral" variant="ghost" class="text-button" type="button" @click.stop="workspaceTrends(group.id)">{{ ui('Workspace trends', '工作区趋势') }} →</UButton><UButton color="neutral" variant="ghost" v-if="groups.find(item => item.id === group.id)?.canManage" class="text-button" type="button" @click.stop="manage(group.id)">{{ ui("Manage workspace", "管理工作区") }} →</UButton></template>
   </ProjectSwitcherMenu>
 </template>

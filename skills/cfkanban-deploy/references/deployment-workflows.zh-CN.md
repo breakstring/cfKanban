@@ -307,7 +307,7 @@ Worker 部署前检查当前 deployment、bindings 与 Cron，部署后核对真
 
 ## 可选 Cloudflare 用量配置
 
-统计默认启用、按需刷新，不设置统计 Cron。默认部署不需要统计 Token、不新增资源；配置不完整时 API 返回 `not_configured`，附件应用预算仍可读取。只有既有附件清理保留小时触发器。
+统计默认启用、按需刷新，不设置统计 Cron。默认部署不需要统计 Token、不新增资源；配置不完整时 API 返回 `not_configured`，附件应用预算仍可读取。schema 29 起核心 Issue 趋势回填使用小时维护触发器（`17 * * * *`），与附件清理共用；每次最多 8 个历史批次、每批 100 个事件，空队列只读一次。附件清理、可选用量采集和回填共同遵循 50 次子请求预算，启用可选模块时减少历史批次数；5 秒后不再启动新批次。该 schedule 显式进入部署计划，在部署前检查原 schedule、部署后核验实际 schedule；首次部署先完成 `worker_deployment_readback` 再 bootstrap，缺少证据不能 finalize。schema 28 及更早保留仅附件清理的原触发器约定。
 
 `plan instance-upgrade` 接受非秘密 `usageAnalytics: { enabled: true, account_id, d1_database_id, r2_bucket_name: null }`。资源必须与本实例一致，省略账户/数据库时从冻结目标解析。显式 `enabled: false` 关闭云端统计；省略整个参数保留原有启用或关闭配置及现有 `USAGE_ANALYTICS_TOKEN` secret binding。允许没有 Secret，此时表示未配置而非零用量。配置变化仍须部署授权；仅改变统计配置时可复用当前 Service 工件。
 

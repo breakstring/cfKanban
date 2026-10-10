@@ -110,6 +110,8 @@ const operations = [
   ["get", "/api/v1/issues/candidates", "listIssueCandidates", "issues", authenticated, "read", "CandidateListQuery"],
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", "listProjectIssues", "issues", authenticated, "read", "IssueListQuery"],
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts", "countProjectIssues", "issues", authenticated, "read", "IssueCountsQuery"],
+  ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/trends", "getProjectIssueTrends", "issues", authenticated, "read", "ProjectIssueTrendsQuery"],
+  ["get", "/api/v1/workspaces/{workspace_id}/issues/trends", "getWorkspaceIssueTrends", "issues", authenticated, "read", "WorkspaceIssueTrendsQuery"],
   ["post", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", "createIssue", "issues", authenticated, "idempotent", "CreateIssueRequest"],
   ["get", "/api/v1/issues/{identifier}", "getIssue", "issues", authenticated, "read", "IssueDetailQuery"],
   ["get", "/api/v1/issues/{identifier}/reference", "getIssueReference", "issues", authenticated, "read", "IssueReferenceQuery"],
@@ -427,7 +429,7 @@ const permissionGroups = {
   workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
   project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectMemberCandidates", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
   scoped_invitation_manager: ["listInvitations", "createInvitation", "getInvitation", "revokeInvitation"],
-  project_reader: ["listMilestones", "getMilestone", "findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "getIssueReference", "countProjectIssues", "listSearchIndexSnapshot", "listSearchIndexChanges"],
+  project_reader: ["getProjectIssueTrends", "getWorkspaceIssueTrends", "listMilestones", "getMilestone", "findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "getIssueReference", "countProjectIssues", "listSearchIndexSnapshot", "listSearchIndexChanges"],
   project_reader_active_writer_tombstone: [
     "listIssues", "listProjectIssues", "getIssue",
     "listAttachments", "listComments", "getComment", "listLabels", "getLabel",
@@ -1200,9 +1202,9 @@ const schemas = {
     },
     additionalProperties: false,
   },
-  Meta: { type: "object", required: ["service_version", "schema_version"], properties: { release_version: string(), service_version: string(), schema_version: integer({ minimum: 1 }), capabilities: { type: "object", properties: { project_milestones: { type: "boolean" }, attachments: { type: "boolean" }, browser_launch: { type: "boolean" }, fixed_workflow: { type: "boolean" }, issue_reference: { type: "boolean" }, issue_search_index: { type: "boolean" }, passkey: { type: "boolean" }, public_join: { type: "boolean" } }, additionalProperties: true } }, additionalProperties: true },
+  Meta: { type: "object", required: ["service_version", "schema_version"], properties: { release_version: string(), service_version: string(), schema_version: integer({ minimum: 1 }), capabilities: { type: "object", properties: { project_milestones: { type: "boolean" }, issue_trends: { type: "boolean" }, attachments: { type: "boolean" }, browser_launch: { type: "boolean" }, fixed_workflow: { type: "boolean" }, issue_reference: { type: "boolean" }, issue_search_index: { type: "boolean" }, passkey: { type: "boolean" }, public_join: { type: "boolean" } }, additionalProperties: true } }, additionalProperties: true },
   Health: { type: "object", required: ["service_version", "schema_version", "d1"], properties: { service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), schema_version: integer({ minimum: 1 }), d1: string({ enum: ["reachable", "unavailable"] }) }, additionalProperties: false },
-  InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { capabilities: { type: "object", properties: { project_milestones: { type: "boolean", description: "True when optional Project milestones and Issue membership are supported." }, issue_reference: { type: "boolean", description: "True only when this Worker supports the bounded Issue reference endpoint. Absence or false is unsupported; a route 404 alone cannot prove a missing Issue." }, issue_search_index: { type: "boolean", description: "True when metadata search status, snapshot and changes endpoints are available; clients must not use ordinary full Issue lists as a fallback." } }, additionalProperties: true }, homepage_notice: ref("PublicHomepageNotice"), discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
+  InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { capabilities: { type: "object", properties: { issue_trends: { type: "boolean", description: "True when authorized UTC Project, Workspace and milestone Issue trends are supported; missing or false is unsupported." }, project_milestones: { type: "boolean", description: "True when optional Project milestones and Issue membership are supported." }, issue_reference: { type: "boolean", description: "True only when this Worker supports the bounded Issue reference endpoint. Absence or false is unsupported; a route 404 alone cannot prove a missing Issue." }, issue_search_index: { type: "boolean", description: "True when metadata search status, snapshot and changes endpoints are available; clients must not use ordinary full Issue lists as a fallback." } }, additionalProperties: true }, homepage_notice: ref("PublicHomepageNotice"), discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
   IssueLabelSummary: {
     type: "object",
     required: ["color", "id", "name"],
@@ -1414,6 +1416,29 @@ const schemas = {
       },
       total_count: integer({ minimum: 0 }),
       resolved_scope: ref("IssueResolvedScope"),
+    },
+    additionalProperties: false,
+  },
+  IssueTrendPoint: {
+    type: "object",
+    required: ["date", "total", "done", "canceled", "unfinished", "created", "completed", "reopened"],
+    properties: {
+      date: string({ format: "date" }),
+      ...Object.fromEntries(["total", "done", "canceled", "unfinished", "created", "completed", "reopened"].map(key => [key, { anyOf: [integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }), { type: "null" }] }])),
+    },
+    additionalProperties: false,
+  },
+  IssueTrendsResult: {
+    type: "object",
+    required: ["timezone", "from_date", "to_date", "observed_at", "scope", "projects", "points"],
+    properties: {
+      timezone: { const: "UTC" },
+      from_date: string({ format: "date" }),
+      to_date: string({ format: "date" }),
+      observed_at: ref("Timestamp"),
+      scope: { type: "object", required: ["workspace_id", "project_ids", "milestone_id"], properties: { workspace_id: ref("Uuid"), project_ids: { type: "array", maxItems: 100, uniqueItems: true, items: ref("Uuid") }, milestone_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
+      projects: { type: "array", maxItems: 100, items: { type: "object", required: ["id", "display_name", "stock_from", "flow_from", "history_state"], properties: { id: ref("Uuid"), display_name: string(), stock_from: { anyOf: [string({ format: "date" }), { type: "null" }] }, flow_from: { anyOf: [string({ format: "date" }), { type: "null" }] }, history_state: string({ enum: ["pending", "complete", "partial"] }) }, additionalProperties: false } },
+      points: { type: "array", minItems: 1, maxItems: 365, items: ref("IssueTrendPoint") },
     },
     additionalProperties: false,
   },
@@ -2636,6 +2661,9 @@ const querySets = {
 for (const name of ["IssueListQuery", "CandidateListQuery"]) querySets[name].push({ name: "q_mode", in: "query", required: false, schema: string({ enum: ["typed"] }), description: "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics." });
 for (const name of ["IssueListQuery", "CandidateListQuery"]) querySets[name].push({ name: "milestone", in: "query", required: false, schema: { anyOf: [ref("Uuid"), { const: "none" }] }, description: "Match one Project milestone or only Issues without a milestone; combined with other dimensions using AND before pagination." });
 querySets.IssueCountsQuery = querySets.IssueListQuery.filter(({ name }) => !["deleted", "cursor", "limit"].includes(name));
+const trendDays = { name: "days", in: "query", required: false, schema: integer({ minimum: 1, maximum: 365, default: 30 }), description: "UTC calendar days including the unfinished current day. Only one days parameter is accepted." };
+querySets.ProjectIssueTrendsQuery = [trendDays, { name: "milestone", in: "query", required: false, schema: ref("Uuid"), description: "Optional single milestone in this Project. Historical scope follows membership on each day; not the current membership applied retrospectively." }];
+querySets.WorkspaceIssueTrendsQuery = [trendDays, { name: "project", in: "query", required: false, schema: { type: "array", minItems: 1, maxItems: 100, uniqueItems: true, items: ref("Uuid") }, style: "form", explode: true, description: "Optional repeated exact Project UUIDs in this Workspace. Omission uses currently readable active Projects intersected with the authenticated Session scope. Explicit inaccessible targets are rejected." }];
 
 const operationResponseSchemas = {
   getNotificationPreferences: ref("NotificationPreferences"),
@@ -2739,6 +2767,8 @@ const operationResponseSchemas = {
   listIssueCandidates: ref("ActiveIssueListResult"),
   listProjectIssues: ref("IssueListResult"),
   countProjectIssues: ref("IssueCountsResult"),
+  getProjectIssueTrends: ref("IssueTrendsResult"),
+  getWorkspaceIssueTrends: ref("IssueTrendsResult"),
   getIssue: { oneOf: [ref("IssueFullDetail"), ref("IssueTombstone")] },
   getIssueContext: ref("IssueContext"),
   getIssueReference: { oneOf: [ref("IssueMentionReference"), ref("IssueResourceReference")] },
@@ -2919,6 +2949,12 @@ for (const [path, description] of [
 }
 paths["/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts"].get.description = "Read exact counts for all five fixed workflow statuses and their total within one active Project, using the same normalized filters and current authorization as the ordinary Issue list. Deleted Issues are excluded; deleted, cursor and limit parameters are rejected. Counts are aggregated by one SQL statement, do not load all Issue pages, and are independent of list request snapshots. Filtered counts may scan all matching candidates; no fixed rows-read cost is promised.";
 paths["/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts"].get.responses["200"].headers = noStoreHeader;
+for (const trendPath of ["/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/trends", "/api/v1/workspaces/{workspace_id}/issues/trends"]) {
+  const operation = paths[trendPath].get;
+  operation.description = "Read UTC daily Issue stock and flow in the exact returned scope under current Project authorization and Session scope. Parent and child Issues count independently. Stock excludes soft-deleted Issues; unfinished is backlog, todo and in_progress, with canceled separate from done. Flow counts original creation and transitions into done; completing again after reopening counts again. Restore and milestone membership changes are not creation or completion. The current day is partial through observed_at. Persisted history is backfilled where recoverable; unknown stock or flow is null, never fabricated zero. projects reports separate stock_from/flow_from and pending/complete/partial coverage. Workspace aggregate values are null when any included Project lacks that metric's coverage. Archived Projects are excluded and purged Projects cannot be recovered. No pagination or ordinary Issue filters are accepted; unknown parameters are rejected. Requires issue_trends capability; clients must not scan Issue lists to reconstruct history.";
+  operation.responses["200"].headers = noStoreHeader;
+  operation["x-cfkanban-additional-query-parameters"] = false;
+}
 paths["/api/v1/admin/owner-credentials/add-device"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Explicitly approve an Agent-generated non-secret pairing request for the same instance and Owner. Requires at least one active Owner API Credential and enforces the 100 active Credential limit atomically. Principal CAS, idempotency and security audit commit together. The new Agent must still verify its pending Credential locally; this is not an all-credentials-lost recovery endpoint.";
 paths["/api/v1/admin/owner-credentials/{credential_id}/revoke"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Atomically revoke another Owner device and its derived Session/Launch capabilities with Principal CAS, idempotency and security audit. Reject the caller's Bearer Credential, an Agent Session's source Credential and the last active Owner API Credential. Passkey Sessions remain independent. Generic Credential DELETE and Owner rotation retain their separate restrictions.";
 paths["/api/v1/admin/owner-credentials/{credential_id}/rename"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Set or change the display name of an exact active Owner Credential, including the caller's and last active device. Principal CAS, idempotency, the immutable result snapshot and security audit commit atomically. Does not rotate/revoke credentials or change secrets, fingerprints, Principal identity, sessions or permissions. Revoked and non-Owner targets are rejected.";

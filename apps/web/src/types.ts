@@ -29,6 +29,27 @@ export interface IssueCounts {
   resolved_scope: Record<string, unknown>;
 }
 
+export interface IssueTrendPoint {
+  date: string;
+  total: number | null;
+  done: number | null;
+  canceled: number | null;
+  unfinished: number | null;
+  created: number | null;
+  completed: number | null;
+  reopened: number | null;
+}
+
+export interface IssueTrends {
+  timezone: "UTC";
+  from_date: string;
+  to_date: string;
+  observed_at: string;
+  scope: { workspace_id: string; project_ids: string[]; milestone_id: string | null };
+  projects: Array<{ id: string; display_name: string; stock_from: string | null; flow_from: string | null; history_state: "pending" | "complete" | "partial" }>;
+  points: IssueTrendPoint[];
+}
+
 export interface ProjectScopeItem {
   project_id: string;
   project_display_name: string;

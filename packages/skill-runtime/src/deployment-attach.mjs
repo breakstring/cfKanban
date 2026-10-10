@@ -20,6 +20,7 @@ import { currentBindingReadback } from "./upgrade-plan.mjs";
 import { normalizePublicAccess } from "./public-access-config.mjs";
 import { verifyPublicAccessConfiguration } from "./public-access.mjs";
 import { existingUsageConfig, USAGE_SECRET } from "./usage-config.mjs";
+import { workerCrons } from "./maintenance-schedule.mjs";
 import { assertNoSymlinkPath, atomicWriteJson, canonicalDigest, ensurePrivateDirectory, pathType, readJson, requireHttpsOrigin, requireString, requireUuid, sha256Bytes } from "./utils.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -151,7 +152,7 @@ export async function inspectDeploymentAttachment(input) {
   const routing = await inspectRouting(connection, target);
   const scheduleClient = await createCloudflareControlClient(connection, `/workers/scripts/${target.workerName}/schedules`, CONTROL_OPTIONS);
   const schedules = await scheduleClient("");
-  const crons = attachments ? [ATTACHMENT_CLEANUP_CRON] : [];
+  const crons = workerCrons(row.schema_version, Boolean(attachments));
   if (!Array.isArray(schedules?.schedules) || canonicalDigest(schedules.schedules.map(item => item?.cron).sort()) !== canonicalDigest(crons)) fail("DEPLOYMENT_ATTACH_CRON_DRIFT", "Unexpected Worker Cron configuration");
   const r2 = attachments ? await readR2Storage({ ...connection, bucketName: attachments.bucket_name }) : null;
   if (r2 && r2.status !== "present") fail("R2_STORAGE_MISSING", "The attachment bucket is absent");

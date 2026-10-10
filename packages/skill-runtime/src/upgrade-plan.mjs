@@ -5,6 +5,7 @@ import { existingUsageConfig, normalizeUsageConfig, usageBindings, USAGE_SECRET,
 import { OWNER_CONTROL_SECRETS, OWNER_CONTROL_VARS, existingOwnerControl, observedCoreRateLimits, nativeRateLimitSimple } from "./owner-control-config.mjs";
 import { normalizeObservedWorkerObservability } from "./worker-observability.mjs";
 import { randomUUID } from "node:crypto";
+import { maintenanceSchedule } from "./maintenance-schedule.mjs";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
 import { normalizeExpectedMigrationData } from "./migrations.mjs";
@@ -449,7 +450,7 @@ export function createInstanceUpgradePlan({
     api_origin: apiOrigin,
   };
 
-  return {
+  const plan = {
     schema_version: 1,
     kind: "deployed_instance_upgrade",
     ...(normalizedTarget.schema_version >= 26 ? { cloudflare_control: { enabled: true, ...ownerControl } } : {}),
@@ -580,4 +581,11 @@ export function createInstanceUpgradePlan({
       "write_redacted_upgrade_receipt",
     ],
   };
+  const maintenance = maintenanceSchedule(plan);
+  if (maintenance) {
+    plan.maintenance = maintenance;
+    plan.cost_delta ||= maintenance.schedule_delta;
+    if (plan.attachment_storage) plan.attachment_storage.previous_cleanup_crons = maintenance.previous_crons;
+  }
+  return plan;
 }

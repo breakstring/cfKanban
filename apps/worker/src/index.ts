@@ -34,6 +34,9 @@ import { registerReleaseUpdatesRoutes } from "./routes/release-updates.ts";
 import { registerUsageRoutes } from "./routes/usage.ts";
 import { registerCloudflareControlRoutes } from "./routes/cloudflare-control.ts";
 import { registerMilestoneRoutes } from "./routes/milestones.ts";
+import { maintenanceBudget } from "./domain/maintenance-budget.ts";
+import { registerIssueTrendRoutes } from "./routes/issue-trends.ts";
+import { backfillIssueTrends } from "./services/issue-trend-projection.ts";
 import { registerScopedAdministratorRoutes } from "./routes/scoped-administrators.ts";
 import { registerSearchIndexRoutes } from "./routes/search-index.ts";
 import { collectAttachmentGarbage } from "./services/attachments.ts";
@@ -78,6 +81,7 @@ registerReleaseUpdatesRoutes(router);
 registerSearchIndexRoutes(router);
 registerCloudflareControlRoutes(router);
 registerMilestoneRoutes(router);
+registerIssueTrendRoutes(router);
 
 function mayHaveJsonBody(request: Request): boolean {
   return request.method !== "GET" && request.method !== "HEAD" && request.body !== null;
@@ -160,19 +164,28 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
 
 export default {
   async scheduled(_controller, env): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    const budget = maintenanceBudget(env.ATTACHMENTS !== undefined, env.USAGE_HISTORY_ENABLED === "true");
     try {
-      const summary = await collectAttachmentGarbage(env);
+      const summary = await collectAttachmentGarbage(env, Date.now(), budget.attachmentBatch || 1, deadline);
       if (summary.failures.delete || summary.failures.verify || summary.failures.release || summary.backlog.garbage || summary.backlog.expired_pending_may_remain) {
         console.warn({ operation: "attachment_garbage_collection", ...summary });
       }
     } catch {
       console.warn({ operation: "attachment_garbage_collection", error: "collection_failed" });
     }
-    if (env.USAGE_HISTORY_ENABLED === "true") {
+    if (env.USAGE_HISTORY_ENABLED === "true" && Date.now() < deadline) {
       try {
         await collectUsageHistoryDaily(env);
       } catch {
         console.warn({ operation: "usage_history_collection", error: "collection_failed" });
+      }
+    }
+    if (Date.now() < deadline) {
+      try {
+        await backfillIssueTrends(env.DB, budget.trendJobs, { deadline });
+      } catch {
+        console.warn({ operation: "issue_trend_backfill", error: "collection_failed" });
       }
     }
   },
