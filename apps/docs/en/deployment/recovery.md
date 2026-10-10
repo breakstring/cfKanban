@@ -11,6 +11,8 @@ Check which steps have completed, then continue the remaining work. Tell me firs
 
 You need the relevant Cloudflare authority and original maintenance records. The Agent keeps the original plan and records and checks what happened before resuming. A timeout does not mean nothing happened in the cloud. Do not rename resources, delete local records, or create a new identity just to retry.
 
+If the initial database migration failed or its result is uncertain, the Agent reads back the database first. Without evidence that the full migration succeeded, it stops and reports the remaining state. It preserves the same plan and records for review; it does not automatically repeat the migration or rebuild the database.
+
 **In the Web UI:** There is no deployment-resume button. An accessible homepage alone does not prove every deployment step completed.
 
 ## Choose an identity recovery route

@@ -199,13 +199,14 @@ test("apply journals both digests before executing the one plan-bound command", 
   assert.equal(calls, 1);
 });
 
-test("包含schema30迁移的首次安装计划继续拒绝，schema31不绕过deferred限制", () => {
+test("schema30/31首次安装缺少冻结投影时拒绝，未来schema仍未开放", () => {
   const input = { taskId: "isolated-install", accountId: "isolated", ownerDisplayName: "IsolatedOwner",
     release: { manifest_version: "isolated", manifest_sha256: "a".repeat(64), service_bundle_version: "isolated", service_bundle_sha256: "b".repeat(64) } };
-  for (const schema of [30, 31, 32]) {
+  for (const schema of [30, 31]) {
     assert.throws(() => createStrictZeroPlan({ ...input, release: { ...input.release, schema_version: schema } }),
-      { code: "DEPLOYMENT_INITIAL_SCHEMA30_UNSUPPORTED" });
+      { code: "INITIAL_MIGRATION_EXECUTION_REQUIRED" });
   }
+  assert.throws(() => createStrictZeroPlan({ ...input, release: { ...input.release, schema_version: 32 } }), { code: "DEPLOYMENT_INITIAL_SCHEMA30_UNSUPPORTED" });
   assert.equal(createStrictZeroPlan({ ...input, release: { ...input.release, schema_version: 29 } }).plan.release.schema_version, 29);
 });
 
@@ -222,7 +223,7 @@ for (const schema of [30, 31]) test(`既存schema${schema}新装计划执行前�
   const runner = async () => { calls++; return { code: 0, stdout: "[]", stderr: "", signal: null }; };
   for (const action of ["create_d1", "deploy_worker_and_static_assets", "apply_non_destructive_migrations", "apply_migration", "initialize_migration_checksum_ledger", "record_migration_checksum", "bootstrap_owner"]) {
     await assert.rejects(executeWranglerAction({ ...operation, taskId: value.task_id, plan: value, wranglerExecutable: "/isolated/wrangler", action, environment: {}, runner }),
-      { code: "DEPLOYMENT_INITIAL_SCHEMA30_UNSUPPORTED" });
+      { code: "INITIAL_MIGRATION_EXECUTION_REQUIRED" });
   }
   assert.equal(calls, 0);
   const journalPath = path.join(getInstancePaths(operation).journalsRoot, `${value.operation_id}.json`);

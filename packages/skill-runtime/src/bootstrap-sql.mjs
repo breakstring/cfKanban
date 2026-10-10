@@ -14,6 +14,7 @@ import { reconcileMigrationState } from "./migrations.mjs";
 import { toolError } from "./errors.mjs";
 import { deploymentCrons } from "./usage-config.mjs";
 import { assertMaintenanceDeploymentEvidence } from "./maintenance-schedule.mjs";
+import { assertInitialMigrationPlan, loadInitialMigrationSources, verifyInitialMigrationProjection } from "./initial-migrations.mjs";
 import {
   assertNoSymlinkPath,
   atomicWritePrivateText,
@@ -45,6 +46,7 @@ export function ownerDeploymentFacts(plan, instanceId, operationId) {
     || plan.operation_id !== operation) {
     throw toolError("INVALID_DEPLOYMENT_PLAN", "Owner bootstrap does not match the frozen strict-zero plan", { instanceId, operationId });
   }
+  assertInitialMigrationPlan(plan);
   return {
     instance,
     operation,
@@ -72,7 +74,14 @@ export async function prepareOwnerCredential({
   plan,
 }) {
   const facts = ownerDeploymentFacts(plan, instanceId, operationId);
-  await assertJournalAuthorization({ stateRoot, instanceId: facts.instance, operationId: facts.operation, taskId, plan });
+  const journal = await assertJournalAuthorization({ stateRoot, instanceId: facts.instance, operationId: facts.operation, taskId, plan });
+  const configEvent = journal.events.findLast(event => event.type === "wrangler_config_written");
+  if (configEvent) {
+    const sources = await loadInitialMigrationSources({ plan, serviceBundleRoot: configEvent.service_bundle_root });
+    if (sources) await loadAuthorizedDeploymentContract({ stateRoot, facts, taskId, plan, configPath: configEvent.config_path });
+  } else if (assertInitialMigrationPlan(plan)) {
+    throw toolError("INITIAL_MIGRATION_CONFIG_REQUIRED", "Prepare the Owner Credential only after verified initial migration projection, schema and Worker deployment");
+  }
   const paths = getInstancePaths({ stateRoot, instanceId: facts.instance });
   const [current, pending] = await Promise.all([
     readJson(paths.currentMetadata, { allowMissing: true }),
@@ -164,6 +173,9 @@ export async function loadAuthorizedDeploymentContract({ stateRoot, facts, taskI
     throw toolError("WRANGLER_CONFIG_DRIFT", "Owner bootstrap config does not match the frozen Cloudflare resources");
   }
   const bundleRoot = absolutePath(configEvent.service_bundle_root, "service_bundle_root");
+  const sources = await loadInitialMigrationSources({ plan, serviceBundleRoot: bundleRoot });
+  if (sources) await verifyInitialMigrationProjection({ stateRoot, instanceId: facts.instance, operationId: facts.operation, plan,
+    serviceBundleRoot: bundleRoot, config, frozenConfigEvent: configEvent, sources });
   const migrationManifestPath = path.join(bundleRoot, "migrations", "manifest.json");
   await assertNoSymlinkPath(migrationManifestPath, bundleRoot);
   const [serviceVersion, migrationManifest] = await Promise.all([

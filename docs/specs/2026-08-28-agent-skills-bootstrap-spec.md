@@ -28,14 +28,14 @@
 > 2026-09-08 增补：[工作区与项目归档及永久删除合同](2026-09-08-container-purge-spec.md) 已冻结。仅 Owner 可预览并永久删除已归档项目或已归档空工作区；该特例覆盖本文相应的 hard-delete 禁止及项目内历史永久保留表述，其余软删除、权限与恢复合同不变。
 
 - 文档状态：Frozen
-- 合同修订：31
+- 合同修订：32
 - Roadmap：R0 / R3
 - 关联 Storyboard：[用户使用 Storyboard](../product/user-storyboard.md)
 - 关联 Foundation：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)
 - 事实快照：[Agent Skill 与本地部署环境能力快照](../research/agent-skill-platform-snapshot-2026-08-28.md)
-- 最近更新：2026-10-02
+- 最近更新：2026-10-10
 - 冻结日期：2026-08-28
-- 最近修订：2026-10-02（用户授权 Git 工作目录检测与关联提醒调整；本次不授权安装、提交、推送或部署）
+- 最近修订：2026-10-10（用户授权补齐 schema 30/31 首次部署的 migration 投影、摘要与恢复合同；具体安装、部署和发布仍按当前任务授权执行）
 
 ## 1. 目的与边界
 
@@ -379,7 +379,21 @@ Node 安装方法、Cloudflare 登录或权限授权属于环境/身份前置步
 
 Skill 内置部署脚本使用本地 journal/operation ID 记录 plan digest 和每个已确认步骤。失败后，同一 Agent 任务内先 readback Cloudflare 当前状态；状态仍匹配 plan 时可以 resume/repair，不需要重复授权。进入新任务/新会话、无法可靠关联原始授权，或 readback 与 plan 不一致时，必须展示当前状态、已完成步骤和剩余 delta，再取得新的明确授权。不得盲目重建 D1、重复 migration、创建第二 Owner 或覆盖未知远程配置。
 
-Service deployment bundle 必须携带已构建 Worker、预构建 Static Assets、migrations、可移植 Wrangler template 和构建时固定的 config schema；不能让 template 指向 bundle 外不存在的源码或依赖。D1 创建并读回准确 database ID 后，受控脚本在 `.cfkanban/instances/<instance_id>/journals/` 生成私有 Frozen Wrangler config，使用 `account_id` 固定 plan 中的准确 account，并绑定 Worker/D1 名称、bindings、compatibility date、rate gates 与 bundle 内绝对路径，而不修改 immutable bundle。明确选中的 named profile 通过 `--profile` 传入；未显式选中时由 Wrangler 按环境/config 目录解析身份。远端 Worker deploy 前必须使用计划中的同一 executable/config 执行 `wrangler deploy --dry-run`；dry run 成功只证明本地编译/config 可接受，不等于远端部署成功或新增授权。D1 继续使用 Cloudflare 标准 migrations apply 的顺序与单 migration 失败回滚语义，同时以 cfKanban checksum ledger + 实际 schema readback 作为完成事实。
+Service deployment bundle 必须携带已构建 Worker、预构建 Static Assets、migrations、可移植 Wrangler template 和构建时固定的 config schema；不能让 template 指向 bundle 外不存在的源码或依赖。D1 创建并读回准确 database ID 后，受控脚本在 `.cfkanban/instances/<instance_id>/journals/` 生成私有 Frozen Wrangler config，使用 `account_id` 固定 plan 中的准确 account，并绑定 Worker/D1 名称、bindings、compatibility date、rate gates 与 bundle 内绝对路径，而不修改 immutable bundle。schema 30/31 首次部署的 `migrations_dir` 采用下述已验证的私有 operation 投影；其他资产仍来自固定 bundle。明确选中的 named profile 通过 `--profile` 传入；未显式选中时由 Wrangler 按环境/config 目录解析身份。远端 Worker deploy 前必须使用计划中的同一 executable/config 执行 `wrangler deploy --dry-run`；dry run 成功只证明本地编译/config 可接受，不等于远端部署成功或新增授权。D1 继续使用 Cloudflare 标准 migrations apply 的顺序与单 migration 失败回滚语义，同时以 cfKanban checksum ledger + 实际 schema readback 作为完成事实。
+
+#### 7.3.1 schema 30/31 首次部署 migration 投影
+
+仅 schema 30 和 31 的新 strict-zero 计划开放此路径。`plan strict-zero` 输入 `initialMigrations: {manifest_sha256, ordered: [{sequence, name, sha256}]}`，覆盖从 1 到目标 schema 的完整连续序列；摘要来自已验证 canonical Service manifest。计划生成 `migrations.initial_execution: {mode: "wrangler_private_projection_v1", manifest_sha256, ordered: [{sequence, name, source_sql_sha256, executed_sql_sha256, compatibility_transform}], projection_sha256}`，`projection_sha256` 是 ordered 列表的 canonical digest；全部字段连同目标 schema 纳入 plan digest。新 schema 30/31 初装入口在创建计划或云端写入前拒绝输入缺失、计划旧形状、manifest/源文件漂移与超出 schema 31 的目标。canonical CLI 及已绑定 Service 工件的 runtime 以工件真实 schema 为准；计划遗漏 schema 或伪称较低版本不能绕过验证。schema 29 及更早的低层历史形状保留原路径，不将其声称为已经执行新工件验证，也不得隐式增加转换。
+
+私有 Frozen config 生成时，受控脚本在该 instance/task/operation 的私有 journal 目录生成完整 migration 投影。只有 `0030_issue_trend_backfill_maintenance.sql` 且源 SHA-256 为 `4a1db214135aeb642784fb08a98752bad7caa920dcf12f9f9bf0fdd6e7fafbb5` 才允许内置 `schema30_parenthesized_trigger_case_v1` 变换，执行 SHA-256 必须为 `5ea850898a3de9cc0c519d0615d4fd42eb064eaeef616b54eb7ddcd747cb1836`；其余文件必须逐字节复制，执行摘要等于源摘要。公开 Service bundle、已发行 SQL、canonical manifest 与 checksum ledger 均保持原始摘要，不另建修改过的发行文件，也不以执行摘要替换业务 ledger checksum。
+
+投影固定为 `.cfkanban/instances/<instance_id>/journals/<operation_id>.initial-migrations/`，不接受任意目录覆盖。生成及复用时检查私有目录 ownership/ACL、symlink、文件类型、完整文件集合、每个执行摘要和冻结 manifest；不跟随 symlink，不接受额外或缺失文件，也不覆盖发生漂移的投影。`wrangler_config_written` journal 记录 `initial_migrations_path` 和 `initial_migrations_projection_sha256`，计划保存双摘要。schema 30/31 的 `create_d1` 动作必须显式传入准确的 `serviceBundleRoot`；后续动作从已授权 `wrangler_config_written` 的 `service_bundle_root` 绑定同一 canonical 来源。新初装入口从 `create_d1` 开始，每次云端写入及 Worker dry run 前重验完整 Service tree/manifest、已授权 plan，以及该阶段应存在的投影和 config 的 `migrations_dir`；验证失败不得执行该动作。只读 migration/Worker 读回仍核对已授权 journal、canonical 来源与冻结 config，但允许投影损坏时诊断，不要求先修好投影。首次应用仍使用一次 `wrangler d1 migrations apply --remote`，不改用公开升级的逐条 `single_query` 入口，不加入失败后的入口切换或 SQL fallback。
+
+首次 migration command 成功后，必须读回所有预期 schema artifacts 与 schema version，确认无未知或冲突 ledger 行。仅在同一已授权 task/operation/plan journal 证明新 D1 创建成功及准确 UUID、该完整非破坏性 apply 成功、后续完整读回确认全部 migration 已应用、每个源摘要与 manifest 均未漂移，且无“已成功补写但又缺失”的 checksum 矛盾时，才可逐条补齐缺失的 insert-only canonical checksum，再完整读回和 reconcile。禁止据任意已有数据库或部分 artifacts 生成 baseline。
+
+migration 失败、超时或响应丢失时，保留同一 plan/projection/journal 并先只读核对。没有成功 apply 证据时，不能凭 schema 看似完整自动补 checksum，也不能自动重跑 migrations apply；停止并说明已知远端状态和需要单独处理的剩余差异。不得删除/重建 D1、改名、重新生成 Owner 或自动 Time Travel restore。Owner bootstrap 的六表零状态恢复仍是独立合同，不扩展成 migration 重试许可。
+
+本地 SQLite、固定 Wrangler splitter、隔离的完整首次部署和拒绝/恢复测试分别证明其实际检查范围；任何本地通过都不替代远端 D1 parser、ledger/schema 与 Worker/Owner 的真实读回。完成报告须区分这些验证，不把未执行的 Cloudflare 首次部署称为已验证。
 
 ### 7.4 Owner Credential 与交付
 
@@ -474,7 +488,7 @@ Service deployment bundle 中的 D1 migration manifest 不能只是一组按文�
 
 该原始 SQL 通过本地 SQLite 与固定 Wrangler splitter 验证，但远端 `/query` 返回 `incomplete input`，后续 schema 读回确认未部分应用。远端解析路径不等同于本地 splitter；本地 validator 通过不能证明远端解析器兼容。未加括号的 `CASE … END` 被远端误拆分是当前推断，不能把这一兼容变换推广为通用 SQL 修复入口；最终仍须以远端 ledger/schema 读回证明应用结果。
 
-此 schema 30 兼容路径在 RC9 的支持范围是既有实例从 schema 29 升至 30，以及已处于 schema 30 的无 migration 升级；不支持含 schema 30 迁移的首次部署（包括 schema 31）。默认 stable 的首次安装流程不受影响。包含 schema 30 迁移的新装（包括 schema 31）必须在创建计划及云端写入前拒绝，不能将公开升级的转换隐式套入首次部署；RC9 也不得凭旧 schema 30 初始部署 plan 继续云端写入。只读资源、migration/schema 读回仍可用于核实中断状态。首次部署所需的 migration 投影、摘要与恢复合同须单独冻结并验收后才能开放，不能临时改写已发布文件。
+公开升级的固定转换与首次部署使用不同执行入口。schema 30/31 首次部署只接受 [7.3.1](#731-schema-3031-首次部署-migration-投影) 的完整新计划及私有投影；旧 schema 30/31 初始部署 plan、缺失投影证据或超出受支持 schema 的目标仍拒绝云端写入。不能把公开升级计划或 `single_query` 执行记录当作首次部署授权，不能临时改写已发行 migration。
 
 该入口限定于已验证的公开升级 migration。Skill 生成的 migration checksum 与 Owner bootstrap SQL 继续使用原有受限文件路径，不把秘密送入命令参数；文件不得包含显式 `BEGIN`、`COMMIT`、`ROLLBACK` 或 `SAVEPOINT`。现有 bootstrap 读回及受保护重试、checksum 同 journal 缺行恢复条件保持不变。只读 SELECT readback 仍通过 `--command --json` 执行。
 

@@ -9,8 +9,8 @@ export const TREND_BACKFILL_SQL_COMPATIBILITY = Object.freeze({
 });
 
 export function assertInitialSchema30Supported(schemaVersion) {
-  if (Number.isSafeInteger(schemaVersion) && schemaVersion >= 30) {
-    throw toolError("DEPLOYMENT_INITIAL_SCHEMA30_UNSUPPORTED", "Initial deployment including the schema 30 migration is temporarily unsupported; use a stable release for initial deployment or upgrade an existing Instance");
+  if (Number.isSafeInteger(schemaVersion) && schemaVersion > 31) {
+    throw toolError("DEPLOYMENT_INITIAL_SCHEMA30_UNSUPPORTED", "Initial migration execution is frozen only through schema 31");
   }
 }
 

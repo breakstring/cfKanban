@@ -19,6 +19,8 @@ You need an Agent that supports Skills, an environment with persistent private s
 
 The default configuration uses one Cloudflare Worker, one D1 database, and a `workers.dev` address, including the Web UI and docs. Attachment storage and custom domains are separate choices.
 
+Before creating resources, the Agent checks that the selected release supports first deployment and verifies its complete deployment artifacts and migration plan. The verified deployment tool handles migration compatibility. Keep the resulting maintenance records so an interruption can be checked against the same plan.
+
 Before execution, check:
 
 - The Cloudflare account, version, and resource names.

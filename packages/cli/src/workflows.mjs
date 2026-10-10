@@ -11,6 +11,7 @@ import { assertReleaseMatchesPlan } from '../../skill-runtime/src/deployment-fin
 import { fetchDiscovery, validateDiscovery } from '../../skill-runtime/src/rebind.mjs';
 import { trustedApiRequest } from '../../skill-runtime/src/transport.mjs';
 import { verifyInstalledServiceBundle } from '../../skill-runtime/src/service-bundle.mjs';
+import { assertInitialMigrationPlan, loadInitialMigrationSources, verifyInitialMigrationProjection } from '../../skill-runtime/src/initial-migrations.mjs';
 import { createCloudflareControlClient } from '../../skill-runtime/src/cloudflare-control.mjs';
 import { inspectCliInstallation, installCliLauncher, rollbackCliRelease, uninstallCliLauncher } from '../../skill-runtime/src/cli-install.mjs';
 import { applyAuthentication } from './auth.mjs';
@@ -106,6 +107,7 @@ async function applyDeployment(input,{helper,stateRoot,fetchImpl,tokenRunner}) {
   const plan=input.plan; input={...input,instanceId:input.instanceId??plan?.target?.instance_id??plan?.evidence?.instance_id,operationId:input.operationId??plan?.operation_id,taskId:input.taskId??plan?.task_id};
   assertAuthorization(input);
   if(!['strict_zero_deploy','deployed_instance_upgrade','deployment_attachment','owner_credential_recovery'].includes(plan.kind)) throw toolError('CLI_UNSUPPORTED_PLAN','This public workflow does not support that plan kind');
+  if(plan.kind==='strict_zero_deploy')assertInitialMigrationPlan(plan);
   await helper('journal create',input); await helper('journal authorize',{...input,planDigest:canonicalDigest(plan)});
   const journalFile=path.join(getInstancePaths({stateRoot,instanceId:input.instanceId}).journalsRoot,`${input.operationId}.json`);
   const lockFile=`${journalFile}.cli.lock`; await assertNoSymlinkPath(lockFile,stateRoot); let lock;
@@ -119,6 +121,7 @@ async function applyDeployment(input,{helper,stateRoot,fetchImpl,tokenRunner}) {
     if(plan.kind==='deployed_instance_upgrade')await verifyUpgradeConnection(input,{stateRoot,fetchImpl});
     const verified=await helper('release verify',input); const {service}=assertReleaseMatchesPlan(verified,plan);
     await verifyInstalledServiceBundle({bundleRoot:input.serviceBundleRoot,expectedVersion:service.version,expectedSha256:service.sha256,expectedPublisher:verified.manifest.publisher.canonical_origin,expectedSource:service.url??service.source});
+    if(plan.kind==='strict_zero_deploy')await loadInitialMigrationSources({plan,serviceBundleRoot:input.serviceBundleRoot});
     const cloud={wranglerExecutable:input.wranglerExecutable,accountId:plan.target.cloudflare_account_id,cloudflareProfile:plan.target.cloudflare_profile,contextDirectory:plan.target.cloudflare_auth_context_directory,fetchImpl};
     await helper('runtime wrangler-account-readback',cloud);
     let routingControl;
@@ -203,9 +206,14 @@ export async function recordFirstDeploymentLedger(input) {
   const latestReadback=journal.events.findLastIndex(event=>event.type==='command_finished'&&event.action==='migration_ledger_readback'&&event.exit_code===0);
   const latestApply=journal.events.findLastIndex(event=>event.type==='command_finished'&&event.action==='apply_non_destructive_migrations'&&event.exit_code===0);
   if(!config||!created||created.database_id!==config.d1_database_id||created.d1_name!==plan.resources.d1.name||created.account_id!==plan.target.cloudflare_account_id||latestReadback<=latestApply||canonicalDigest(journal.events[latestReadback].migration_readback)!==canonicalDigest(readback))throw toolError('CLI_INITIAL_LEDGER_READBACK_REQUIRED','Use the exact created D1 UUID and fresh same-journal bounded migration readback after confirmed migration apply');
+  for(const event of journal.events.filter(event=>event.type==='command_finished'&&event.action==='record_migration_checksum'&&event.exit_code===0)) {
+    const row=readback.ledger.find(row=>row.sequence===event.migration?.sequence&&row.name===event.migration?.name);
+    if(!row||row.sha256!==event.migration.sha256||row.operation_id!==operationId)throw toolError('CLI_INITIAL_LEDGER_STATE_CONTRADICTION','A checksum recorded successfully by this initial deployment is missing or changed in the fresh remote readback');
+  }
   const receipt=await readJson(path.join(path.dirname(config.service_bundle_root),'.cfkanban-release.json'));
   await verifyInstalledServiceBundle({bundleRoot:config.service_bundle_root,expectedVersion:plan.release.service_bundle_version,expectedSha256:plan.release.service_bundle_sha256,expectedPublisher:receipt.publisher,expectedSource:receipt.source});
   const frozenManifest=await readJson(path.join(config.service_bundle_root,'migrations/manifest.json'));
+  if(assertInitialMigrationPlan(plan))await verifyInitialMigrationProjection({stateRoot,instanceId,operationId,plan,serviceBundleRoot:config.service_bundle_root,config:await readJson(config.config_path),frozenConfigEvent:config});
   if(canonicalDigest(frozenManifest)!==canonicalDigest(manifest))throw toolError('CLI_INITIAL_LEDGER_MANIFEST_DRIFT','Use the exact manifest from the verified immutable Service bundle');
   const state=reconcileMigrationState({manifest,ledger:readback.ledger,schema:readback.schema});
   if(state.unknown_ledger_rows.length||state.migrations.some(entry=>entry.state!=='applied'&&!(entry.reason==='schema_present_ledger_missing'||entry.reason==='uninitialized_data_ledger_missing'))) throw toolError('CLI_INITIAL_LEDGER_SCHEMA_DRIFT','Every migration must have complete verified schema artifacts from the same new database');

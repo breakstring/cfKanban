@@ -13,7 +13,8 @@ import { toolError } from "./errors.mjs";
 import { assessMigrationLedgerRecovery, normalizeExpectedMigrationData, reconcileMigrationState } from "./migrations.mjs";
 import { loadPendingCredentialSecret } from "./state.mjs";
 import { UPGRADE_MIGRATION_EXECUTION } from "./upgrade-plan.mjs";
-import { assertInitialSchema30Supported, prepareUpgradeMigrationSql } from "./migration-sql-compatibility.mjs";
+import { prepareUpgradeMigrationSql } from "./migration-sql-compatibility.mjs";
+import { assertInitialMigrationPlan, loadInitialMigrationSources, verifyInitialMigrationProjection } from "./initial-migrations.mjs";
 import { verifyInstalledServiceBundle } from "./service-bundle.mjs";
 import { deploymentCompletion, findDeploymentAttempt, isDeploymentMarker, prepareDeploymentProof } from "./worker-deployment-recovery.mjs";
 import { canonicalDigest, normalizeLf, readJson, requireString, requireUuid, sha256Bytes } from "./utils.mjs";
@@ -867,6 +868,7 @@ export async function executeWranglerAction({
   wranglerExecutable,
   action,
   configPath = null,
+  serviceBundleRoot = null,
   bootstrapSqlPath = null,
   migrationLedgerSchemaSqlPath = null,
   migrationReadbackSqlPath = null,
@@ -878,9 +880,9 @@ export async function executeWranglerAction({
   environment: controlEnvironment = process.env,
   tokenRunner,
 }) {
-  if (plan.kind === "strict_zero_deploy" && INITIAL_DEPLOYMENT_WRITE_ACTIONS.has(action)) {
-    assertInitialSchema30Supported(plan.release?.schema_version);
-  }
+  let initialExecution = plan.kind === "strict_zero_deploy" && (INITIAL_DEPLOYMENT_WRITE_ACTIONS.has(action)
+    || (plan.migrations?.initial_execution && action === "validate_worker_bundle"))
+    ? assertInitialMigrationPlan(plan) : null;
   const journal = await assertJournalAuthorization({ stateRoot, instanceId, operationId, taskId, plan });
   const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
   if (plan.kind === "deployed_instance_upgrade" && (plan.current?.provenance === "remote_observed" || plan.resources?.r2 || plan.usage_analytics || plan.cost_protection || plan.public_access) && action === "deploy_worker_and_static_assets") {
@@ -896,12 +898,51 @@ export async function executeWranglerAction({
     await verifyPlannedMaintenanceSchedule({ plan, phase: "before", wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
   }
   let frozenConfigEvent = null;
+  let frozenConfig = null;
+  let initialSources = null;
   if (configPath !== null) {
     const normalizedConfig = safeAbsolute(configPath, "config_path");
     frozenConfigEvent = [...journal.events].reverse().find((event) => event.type === "wrangler_config_written") || null;
     const config = await readJson(normalizedConfig);
+    frozenConfig = config;
     if (frozenConfigEvent === null || frozenConfigEvent.config_path !== normalizedConfig || frozenConfigEvent.config_digest !== canonicalDigest(config)) {
       throw toolError("WRANGLER_CONFIG_DRIFT", "Wrangler config does not match the frozen config recorded in the authorized operation journal", { configPath: normalizedConfig });
+    }
+  }
+  if (plan.kind === "strict_zero_deploy" && (INITIAL_DEPLOYMENT_WRITE_ACTIONS.has(action) || action === "validate_worker_bundle")) {
+    const boundRoot = action === "create_d1" ? serviceBundleRoot : frozenConfigEvent?.service_bundle_root ?? serviceBundleRoot;
+    if (boundRoot) {
+      initialSources = await loadInitialMigrationSources({ plan, serviceBundleRoot: boundRoot });
+      initialExecution = initialSources?.execution ?? initialExecution;
+    }
+  }
+  if (plan.kind === "strict_zero_deploy" && action === "migration_ledger_readback" && frozenConfigEvent) {
+    const bundleRoot = frozenConfigEvent.service_bundle_root;
+    if (plan.migrations?.initial_execution) {
+      await loadInitialMigrationSources({ plan, serviceBundleRoot: bundleRoot });
+    } else {
+      const manifest = await readJson(path.join(bundleRoot, "migrations/manifest.json"), { allowMissing: true });
+      if (manifest?.schema_version >= 30) {
+        const receipt = await readJson(path.join(path.dirname(bundleRoot), ".cfkanban-release.json"));
+        await verifyInstalledServiceBundle({ bundleRoot, expectedVersion: plan.release.service_bundle_version,
+          expectedSha256: plan.release.service_bundle_sha256, expectedPublisher: receipt.publisher, expectedSource: receipt.source });
+      }
+    }
+  }
+  if (initialExecution) {
+    if (action === "create_d1") {
+      if (initialSources === null) await loadInitialMigrationSources({ plan, serviceBundleRoot });
+    } else {
+      if (frozenConfigEvent === null) throw toolError("CONFIG_REQUIRED", "First-deployment writes require the frozen private projection config");
+      await verifyInitialMigrationProjection({ stateRoot, instanceId, operationId, plan,
+        serviceBundleRoot: frozenConfigEvent.service_bundle_root, config: frozenConfig, frozenConfigEvent, sources: initialSources });
+      if (action === "initialize_migration_checksum_ledger"
+        && safeAbsolute(migrationLedgerSchemaSqlPath, "migration_ledger_schema_sql_path") !== path.join(frozenConfigEvent.service_bundle_root, "release/deployment/migration-ledger.sql")) {
+        throw toolError("INITIAL_MIGRATION_LEDGER_SOURCE_DRIFT", "First-deployment ledger SQL must come from the verified canonical Service bundle");
+      }
+      if (action === "apply_non_destructive_migrations" && journal.events.some(event => event.type === "command_started" && event.action === action)) {
+        throw toolError("INITIAL_MIGRATION_ALREADY_ATTEMPTED", "Initial migration apply was already attempted; verify bounded remote state before continuing, without automatic reapply");
+      }
     }
   }
   if (plan.kind === "deployed_instance_upgrade" && configPath === null) {
@@ -1045,6 +1086,7 @@ export async function executeWranglerAction({
     event: {
       type: "command_started",
       action,
+      ...(action === "apply_non_destructive_migrations" && initialExecution ? { initial_migration_execution: initialExecution } : {}),
       ...(action === "deploy_worker_and_static_assets" && deploymentProof ? { deployment_proof: deploymentProof } : {}),
       ...(migrationReadbackSource === null ? {} : { migration_readback_source: migrationReadbackSource }),
       executable,

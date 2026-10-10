@@ -18,6 +18,8 @@ cfkanban deploy trends run --help
 
 Preparation checks compatible Node/Wrangler, exact Cloudflare account, trustworthy release and artifact digests. Plan output binds resources, migrations, optional capabilities and costs. Apply requires matching authorization material for that exact plan; a blanket yes does not authorize drift. Multi-step deployment is not one atomic transaction.
 
+For a schema 30/31 first deployment, `deploy plan` takes the verified Service manifest's exact `release.schema_version` and `initialMigrations: {manifest_sha256, ordered: [{sequence, name, sha256}]}` covering the complete sequence from 1 through that schema. The plan freezes both source and executed migration hashes; private config generation writes the operation's verified migration projection. Apply/resume need the matching verified `serviceBundleRoot`. Older plans missing this evidence and schemas above 31 stop before cloud writes. Published migration files and canonical ledger checksums remain unchanged.
+
 Resume keeps the same plan, operation and journal. Unknown resources, identity changes, partial migrations or schema/readback mismatches stop new writes. Same-plan recovery does not require new approval when the existing authorization covers it. Success requires actual Worker/D1/Owner/version readback and receipt, not a subprocess exit code.
 
 Deployment keeps the required explicit instance, Cloudflare account and resource targets. Apply/resume use the frozen authorized plan; moving directories or changing saved CLI context never retargets that plan or replaces its confirmation.

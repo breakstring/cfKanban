@@ -18,6 +18,8 @@ cfkanban deploy trends run --help
 
 准备时核对 Node/Wrangler 兼容、准确 Cloudflare 账户、可信发行及工件摘要。计划固定资源、迁移、可选能力与费用。Apply 需要与准确计划匹配的授权材料，通用 yes 不授权漂移；多步部署不是单个原子事务。
 
+schema 30/31 首次部署时，`deploy plan` 使用已验证 Service manifest 的准确 `release.schema_version`，并传入从 1 连续覆盖该 schema 的 `initialMigrations: {manifest_sha256, ordered: [{sequence, name, sha256}]}`。计划固定迁移源摘要和执行摘要，私有 config 生成该 operation 的已验证 migration 投影。apply/resume 需要匹配且已验证的 `serviceBundleRoot`。缺失这些证据的旧计划或超过 schema 31 的目标均在云端写入前停止；已发行 migration 文件及 canonical ledger checksum 保持不变。
+
 续跑保留同一 plan、operation 和 journal。来源不明资源、身份变化、部分迁移或 schema/读回不一致使新写入停止。同计划无漂移恢复在原授权覆盖时不重复请求批准。成功要求 Worker、D1、Owner、版本的实际读回与 receipt，不能只看子进程退出码。
 
 部署保留必要的显式实例、Cloudflare 账户与资源目标。Apply/resume 使用已冻结的获批计划；切换目录或修改 CLI 保存上下文不会改选该计划目标，也不能代替确认。

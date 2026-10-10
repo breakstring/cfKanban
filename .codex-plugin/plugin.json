@@ -1,6 +1,6 @@
 {
   "name": "cfkanban-agent-skills",
-  "version": "1.12.0-rc.11",
+  "version": "1.12.0-rc.12",
   "description": "Portable cfKanban guidance and skills for daily collaboration, Owner administration, and safe Cloudflare deployment.",
   "author": {
     "name": "cfKanban maintainers"

@@ -5,7 +5,7 @@
 - 执行任务：[CFK-715](https://cfkanban.dev/app/issues/CFK-715)
 - 确认依据：用户授权实施 CFK-715，确认第一版提供项目/工作区未完成存量、每日新增/完成，以及里程碑总范围/完成燃起图，并选择回填已有可恢复历史。
 - 维护修订：[CFK-730](https://cfkanban.dev/app/issues/CFK-730)，用户于 2026-10-10 授权将首次回填与小时维护分离，连续执行有界小批次并记录实际用量。本修订适用于 schema 30；schema 29 已发行的小时回填行为保留为历史合同。
-- 界面与范围修订：[CFK-731](https://cfkanban.dev/app/issues/CFK-731)，用户于 2026-10-10 确认工作区趋势合并至设置标签、只向工作区管理员开放并汇总全部未归档项目；取消项目子集与每日数值展开，里程碑图保留 burn-up 口径并命名为完成进度。工作区描述使用 schema 31；维护 runtime 明确支持 schema 30 / 31 并核对同版本 receipt、不可变 Service 与真实目标，首次安装限制保留。
+- 界面与范围修订：[CFK-731](https://cfkanban.dev/app/issues/CFK-731)，用户于 2026-10-10 确认工作区趋势合并至设置标签、只向工作区管理员开放并汇总全部未归档项目；取消项目子集与每日数值展开，里程碑图保留 burn-up 口径并命名为完成进度。工作区描述使用 schema 31；维护 runtime 明确支持 schema 30 / 31 并核对同版本 receipt、不可变 Service 与真实目标，schema 30/31 首次安装采用 [Bootstrap 的 migration 投影合同](2026-08-28-agent-skills-bootstrap-spec.md#731-schema-3031-首次部署-migration-投影)，缺失完整新计划仍拒绝。
 - 上游：Foundation、API / Schema、项目里程碑、Web UI、公共 CLI、容器清理及事件历史合同。
 
 ## 1. 第一版范围

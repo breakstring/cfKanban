@@ -11,6 +11,7 @@ import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { verifyInstalledServiceBundle } from "./service-bundle.mjs";
 import { readServiceApiVersion } from "./service-api-version.mjs";
 import { assertAttachmentStoragePlan } from "./r2-storage.mjs";
+import { writeInitialMigrationProjection } from "./initial-migrations.mjs";
 import {
   assertNoSymlinkPath,
   atomicWriteJson,
@@ -114,7 +115,7 @@ export async function writeFrozenWranglerConfig({
   if (await pathType(bundleRoot) !== "directory") {
     throw toolError("SERVICE_BUNDLE_INCOMPLETE", "Verified Service bundle root is not a directory", { service_bundle_root: bundleRoot });
   }
-  const serviceBundleEvidence = plan.kind === "deployed_instance_upgrade"
+  let serviceBundleEvidence = plan.kind === "deployed_instance_upgrade"
     ? await verifyInstalledServiceBundle({
         bundleRoot,
         expectedVersion: plan.release?.service_bundle_version,
@@ -132,7 +133,14 @@ export async function writeFrozenWranglerConfig({
   const schemaPath = await requireBundleEntry(bundleRoot, "wrangler-config-schema.json", "file");
   const mainPath = await requireBundleEntry(bundleRoot, path.join("dist", "index.js"), "file");
   const assetsPath = await requireBundleEntry(bundleRoot, path.join("apps", "web", "dist"), "directory");
-  const migrationsPath = await requireBundleEntry(bundleRoot, "migrations", "directory");
+  let migrationsPath = await requireBundleEntry(bundleRoot, "migrations", "directory");
+  const initialProjection = plan.kind === "strict_zero_deploy"
+    ? await writeInitialMigrationProjection({ stateRoot, instanceId: instance, operationId: operation, plan, serviceBundleRoot: bundleRoot })
+    : null;
+  if (initialProjection) {
+    migrationsPath = initialProjection.path;
+    serviceBundleEvidence = initialProjection.sources.evidence;
+  }
   const schemaVersion = plan.kind === "strict_zero_deploy" ? plan.release?.schema_version : plan.target?.schema_version;
   if (plan.cloudflare_control?.enabled) {
     const manifestPath = await requireBundleEntry(bundleRoot, "migrations/manifest.json", "file");
@@ -211,6 +219,10 @@ export async function writeFrozenWranglerConfig({
       config_digest: configDigest,
       d1_database_id: databaseId,
       service_bundle_root: bundleRoot,
+      ...(initialProjection === null ? {} : {
+        initial_migrations_path: initialProjection.path,
+        initial_migrations_projection_sha256: initialProjection.projection_sha256,
+      }),
       ...(serviceBundleEvidence === null ? {} : {
         service_bundle_artifact_sha256: serviceBundleEvidence.artifact_sha256,
         service_bundle_tree_digest: serviceBundleEvidence.bundle_tree_digest,
