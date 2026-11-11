@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createTestHarness } from "wrangler";
-import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
+import { authenticateBearer, authenticateCookieSession } from "../../apps/worker/src/kernel/auth.ts";
 import { createCursorContext, encodeCursor } from "../../apps/worker/src/kernel/cursor.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import { getIssue, getIssueContext } from "../../apps/worker/src/services/issues.ts";
@@ -17,6 +17,7 @@ const server = createTestHarness({
 const owner = randomUUID(), credential = randomUUID(), member = randomUUID(), memberCredential = randomUUID();
 const workspace = randomUUID(), projects = [randomUUID(), randomUUID(), randomUUID()], issue = randomUUID(), emptyIssue = randomUUID();
 const grants = [randomUUID(), randomUUID()];
+const passkey = randomUUID(), cookieSessions = [];
 const ownerToken = `cfk_v1_collaboration_${"A".repeat(43)}`;
 const memberToken = `cfk_v1_collaborationmember_${"B".repeat(43)}`;
 const uuid = (family, n) => `${family}000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -27,6 +28,17 @@ const url = (parameters = {}) => {
   return result;
 };
 let db, auth, memberAuth, identifier, emptyIdentifier;
+
+async function cookieSession(sourceKind, sourceId, target) {
+  const id = randomUUID(), token = randomUUID().replaceAll("-", "") + "C".repeat(12);
+  const createdAt = Date.now() - 60_000, expiresAt = createdAt + 28_800_000;
+  await db.prepare(`INSERT INTO web_sessions
+    (id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,created_at,expires_at)
+    VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)`)
+    .bind(id,createHash("sha256").update(token).digest("hex"),owner,sourceKind,sourceId,target.kind,JSON.stringify(target),createdAt,expiresAt).run();
+  const current = await authenticateCookieSession(db,new Request(origin,{headers:{cookie:`cfkanban_session=${token}`}}));
+  return { id, sourceKind, sourceId, createdAt, expiresAt, auth:current };
+}
 
 function observe({ beforeQuery = async () => {}, afterQuery = async () => {} } = {}) {
   const queries = [];
@@ -114,6 +126,13 @@ before(async () => {
   emptyIdentifier = `CFK-${(await db.prepare("SELECT number FROM issues WHERE id=?1").bind(emptyIssue).first()).number}`;
   auth = await authenticateBearer(db, `Bearer ${ownerToken}`);
   memberAuth = await authenticateBearer(db, `Bearer ${memberToken}`);
+  await db.prepare(`INSERT INTO web_authenticators
+    (id,principal_id,credential_id,public_key_cose,algorithm,user_handle,backup_eligible,backup_state,rp_id,created_at,created_operation_id)
+    VALUES(?1,?2,?3,'test-public-key',-7,'test-user',0,0,?4,1,?5)`)
+    .bind(passkey,owner,randomUUID(),new URL(origin).hostname,randomUUID()).run();
+  for (const [sourceKind, sourceId] of [["credential",credential],["web_authenticator",passkey]]) {
+    cookieSessions.push(await cookieSession(sourceKind,sourceId,{kind:"admin",entry_path:"/app/admin",section:"overview"}));
+  }
 });
 after(() => server.close());
 
@@ -132,10 +151,19 @@ function previousRelationSql(query, withCursor) {
   const projection = query.sql.slice(query.sql.indexOf("\n  SELECT relation.id", query.sql.indexOf("candidate_relations AS")))
     .replace("FROM candidate_relations candidate\n  CROSS JOIN issue_relations relation ON relation.id = candidate.id", "FROM issue_relations relation")
     .replaceAll("\n  CROSS JOIN ", "\n  JOIN ")
-    .replace("WHERE relation.source_project_id", "WHERE (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1) AND relation.source_project_id")
-    .replace("ORDER BY relation.created_at ASC, relation.id ASC", `${withCursor ? "AND (?3 IS NULL OR relation.created_at > ?3 OR (relation.created_at = ?3 AND relation.id > ?4))" : ""}
+    .replace("ORDER BY relation.created_at ASC, relation.id ASC", `AND (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1)
+      ${withCursor ? "AND (?3 IS NULL OR relation.created_at > ?3 OR (relation.created_at = ?3 AND relation.id > ?4))" : ""}
       ORDER BY relation.created_at ASC, relation.id ASC LIMIT ${withCursor ? "?5" : "?3"}`);
   return prefix + projection;
+}
+
+async function assertRelationProjectCursorBudget(query) {
+  const { results } = await db.prepare(`EXPLAIN ${query.sql}`).bind(...query.values).all();
+  const singleColumnCursors = new Set(results.filter(row => row.opcode === "OpenEphemeral" && row.p2 === 1).map(row => row.p1));
+  const duplicateCursors = results.filter(row => row.opcode === "OpenDup" && singleColumnCursors.has(row.p2)).map(row => row.p1);
+  assert.ok(duplicateCursors.length > 0);
+  // 这条关系查询重复引用单列项目 CTE，保留其展开后的 D1 编译预算。
+  assert.ok(Math.max(...duplicateCursors) < 100,`Relation project cursor high-water mark: ${Math.max(...duplicateCursors)}`);
 }
 
 const oldCommentsSql = `SELECT c.id,c.kind,c.body,c.completion_json,c.author_principal_id,
@@ -314,6 +342,86 @@ test("Relation 页在 SQL 前与投影后权限变化时拒绝旧范围，删除
       assert.ok(result.items.every(row => row.id !== uuid("d2",endpointIndex)));
     } finally {
       await db.prepare("UPDATE issues SET deleted_at=NULL,deleted_by_principal_id=NULL WHERE id=?1").bind(uuid("d1",endpointIndex)).run();
+    }
+  }
+});
+
+test("Credential 与 Passkey Cookie 的 Relation 首屏、游标、空结果和固定 Project 范围保持一致", async () => {
+  const firstMeasured = observe();
+  const first = await listIssueRelations(firstMeasured.db,auth,identifier,url({limit:20}));
+  await assertRelationProjectCursorBudget(firstMeasured.queries.find(row => row.sql.includes("candidate_relations AS MATERIALIZED")));
+  assert.equal(first.items.length,20);
+  assert.equal(first.has_more,true);
+  const nextUrl = url({limit:20,cursor:first.next_cursor});
+  const nextMeasured = observe();
+  const next = await listIssueRelations(nextMeasured.db,auth,identifier,nextUrl);
+  await assertRelationProjectCursorBudget(nextMeasured.queries.find(row => row.sql.includes("candidate_relations AS MATERIALIZED")));
+  assert.equal(next.items.length,20);
+  assert.ok(next.items.every(row => !first.items.some(previous => previous.id === row.id)));
+  for (const session of cookieSessions) {
+    for (const [pageUrl, expected] of [[url({limit:20}),first],[nextUrl,next]]) {
+      const measured = observe();
+      assert.deepEqual(await listIssueRelations(measured.db,session.auth,identifier,pageUrl),expected);
+      await assertRelationProjectCursorBudget(measured.queries.find(row => row.sql.includes("candidate_relations AS MATERIALIZED")));
+    }
+    assert.deepEqual((await listIssueRelations(db,session.auth,emptyIdentifier,url())).items,[]);
+  }
+  const sameProject = randomUUID(), otherProject = randomUUID();
+  for (const [id, targetId, targetProject] of [[sameProject,issue,projects[0]],[otherProject,uuid("d1",0),projects[1]]]) {
+    await db.prepare(`INSERT INTO issue_relations
+      (id,workspace_id,kind,source_issue_id,target_issue_id,source_project_id,target_project_id,created_at,created_by_principal_id,created_operation_id)
+      VALUES(?1,?2,'related',?3,?4,?5,?6,1,?7,?8)`)
+      .bind(id,workspace,emptyIssue,targetId,projects[0],targetProject,owner,randomUUID()).run();
+  }
+  assert.equal((await listIssueRelations(db,auth,emptyIdentifier,url())).items.length,2);
+  for (const session of cookieSessions) {
+    const fixed = await cookieSession(session.sourceKind,session.sourceId,{
+      kind:"project",workspace_id:workspace,project_id:projects[0],entry_path:`/app/w/${workspace}/p/${projects[0]}`,
+    });
+    const page = await listIssueRelations(db,fixed.auth,emptyIdentifier,url());
+    assert.deepEqual(page.items.map(row => row.id),[sameProject]);
+    assert.equal(page.has_more,false);
+    assert.deepEqual(page.resolved_scope.visible_project_ids,[projects[0]]);
+  }
+});
+
+test("Cookie Relation 在查询前或投影后撤销 Session 和两种来源时拒绝，过期 Session 不返回结果", async () => {
+  for (const session of cookieSessions) {
+    const sourceTable = session.sourceKind === "credential" ? "credentials" : "web_authenticators";
+    for (const target of ["source","session"]) for (const phase of ["beforeQuery","afterQuery"]) {
+      const table = target === "source" ? sourceTable : "web_sessions";
+      const id = target === "source" ? session.sourceId : session.id;
+      const actor = table === "web_authenticators" ? ",revoked_by_principal_id=?2" : "";
+      let changed = false;
+      const measured = observe({[phase]:async sql => {
+        if (!changed && sql.includes("candidate_relations AS MATERIALIZED")) {
+          changed = true;
+          await db.prepare(`UPDATE ${table} SET revoked_at=2${actor} WHERE id=?1`)
+            .bind(id,...(actor ? [owner] : [])).run();
+        }
+      }});
+      try {
+        await assert.rejects(listIssueRelations(measured.db,session.auth,identifier,url({limit:20})),error => error.code === "UNAUTHORIZED");
+        assert.equal(changed,true);
+        const query = measured.queries.find(row => row.sql.includes("candidate_relations AS MATERIALIZED"));
+        assert.equal(query.result.results.length,phase === "beforeQuery" ? 0 : 21);
+        assert.ok(query.read < 600,`${session.sourceKind}/${target}/${phase}: ${query.read}`);
+      } finally {
+        await db.prepare(`UPDATE ${table} SET revoked_at=NULL${actor ? ",revoked_by_principal_id=NULL" : ""} WHERE id=?1`).bind(id).run();
+      }
+    }
+    for (const field of ["expires_at","created_at"]) {
+      const now = Date.now();
+      await db.prepare(`UPDATE web_sessions SET ${field}=?2 WHERE id=?1`)
+        .bind(session.id,field === "expires_at" ? now : now - 7 * 86_400_000).run();
+      try {
+        const measured = observe();
+        await assert.rejects(listIssueRelations(measured.db,session.auth,identifier,url(),now),error => error.code === "UNAUTHORIZED");
+        assert.deepEqual(measured.queries.find(row => row.sql.includes("candidate_relations AS MATERIALIZED")).result.results,[]);
+      } finally {
+        await db.prepare(`UPDATE web_sessions SET ${field}=?2 WHERE id=?1`)
+          .bind(session.id,field === "expires_at" ? session.expiresAt : session.createdAt).run();
+      }
     }
   }
 });

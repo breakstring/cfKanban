@@ -255,6 +255,7 @@ function activeRelationListSql(withCursor: boolean, authGuardSql: string): strin
              ${cursorPredicate}
            ORDER BY relation.created_at ASC, relation.id ASC
            LIMIT ${limitParameter}`;
+  // 认证条件留在最终投影，避免重复引用的项目 CTE 放大 Cookie 校验的 D1 编译复杂度。
   return `WITH current_visible_projects(id) AS MATERIALIZED (
            SELECT current_project.id
            FROM projects current_project
@@ -263,7 +264,6 @@ function activeRelationListSql(withCursor: boolean, authGuardSql: string): strin
            WHERE current_project.id IN (SELECT value FROM json_each(?2))
              AND current_project.deleted_at IS NULL
              AND current_workspace.deleted_at IS NULL
-             AND ${authGuardSql}
              AND (
                current_instance.owner_principal_id = ${principalParameter}
                OR EXISTS (
@@ -283,7 +283,8 @@ function activeRelationListSql(withCursor: boolean, authGuardSql: string): strin
            LIMIT ${limitParameter}
          )
          ${projection}
-         WHERE relation.source_project_id = source.project_id
+         WHERE ${authGuardSql}
+           AND relation.source_project_id = source.project_id
            AND relation.target_project_id = target.project_id
            AND relation.deleted_at IS NULL
            AND workspace.deleted_at IS NULL
